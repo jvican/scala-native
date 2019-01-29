@@ -6,7 +6,7 @@ import scalanative.io.packageNameFromPath
 val sbt13Version          = "0.13.17"
 val sbt13ScalaVersion     = "2.10.7"
 val sbt10Version          = "1.2.6"
-val sbt10ScalaVersion     = "2.12.7"
+val sbt10ScalaVersion     = "2.12.8"
 val libScalaVersion       = "2.11.12"
 val libCrossScalaVersions = Seq("2.11.8", "2.11.11", libScalaVersion)
 
@@ -18,6 +18,16 @@ def convertCamelKebab(name: String): String = {
 // Generate project name from project id.
 def projectName(project: sbt.ResolvedProject): String = {
   convertCamelKebab(project.id)
+}
+
+lazy val startupTransition: State => State = { s: State =>
+  if (System.getProperty("METALS_ENABLED") != null) "^^1.2.6" :: s
+  else s
+}
+
+onLoad in Global := {
+  val old = (onLoad in Global).value
+  startupTransition compose old
 }
 
 // Provide consistent project name pattern.
@@ -172,6 +182,8 @@ lazy val mavenPublishSettings = Seq(
 lazy val publishSettings = Seq(
   publishArtifact in Compile := true,
   publishArtifact in Test := false,
+  publishArtifact in (Compile, packageDoc) := !version.value.contains("SNAPSHOT"),
+  publishArtifact in (Compile, packageSrc) := !version.value.contains("SNAPSHOT"),
   homepage := Some(url("http://www.scala-native.org")),
   startYear := Some(2015),
   licenses := Seq(
@@ -214,6 +226,7 @@ lazy val toolSettings =
           case "0.13" => sbt13ScalaVersion
           case _      => sbt10ScalaVersion
         }
+        //sbt10ScalaVersion
       },
       scalacOptions ++= Seq(
         "-deprecation",
@@ -280,6 +293,24 @@ lazy val tools =
         "org.scalatest"  %% "scalatest"  % "3.0.0"  % "test"
       ),
       fullClasspath in Test := ((fullClasspath in Test) dependsOn setUpTestingCompiler).value,
+      javaOptions in Test ++= {
+        val nscpluginjar = (Keys.`package` in nscplugin in Compile).value
+        val nativelibjar = (Keys.`package` in nativelib in Compile).value
+        val auxlibjar    = (Keys.`package` in auxlib in Compile).value
+        val clibjar      = (Keys.`package` in clib in Compile).value
+        val posixlibjar  = (Keys.`package` in posixlib in Compile).value
+        val scalalibjar  = (Keys.`package` in scalalib in Compile).value
+        val javalibjar   = (Keys.`package` in javalib in Compile).value
+        val testingcompilercp =
+          (fullClasspath in testingCompiler in Compile).value.files
+        val testingcompilerjar = (Keys.`package` in testingCompiler in Compile).value
+
+        val nscpluginProp = "-Dscalanative.nscplugin.jar=" + nscpluginjar.getAbsolutePath.toString
+        val testingcompilerProp = "-Dscalanative.testingcompiler.cp=" + ((testingcompilercp :+ testingcompilerjar) map (_.getAbsolutePath) mkString pathSeparator)
+        val nativeruntimeProp = "-Dscalanative.nativeruntime.cp=" + (Seq(nativelibjar, auxlibjar, clibjar, posixlibjar, scalalibjar, javalibjar) mkString pathSeparator)
+        val nativelibProp = "-Dscalanative.nativelib.dir=" + (((crossTarget in Compile).value / "nativelib").getAbsolutePath)
+        List(nscpluginProp, testingcompilerProp, nativeruntimeProp, nativelibProp)
+      },
       publishLocal := publishLocal
         .dependsOn(publishLocal in nir)
         .dependsOn(publishLocal in util)
@@ -289,6 +320,22 @@ lazy val tools =
       mimaSettings
     )
     .dependsOn(nir, util, testingCompilerInterface % Test)
+
+lazy val benchmarks = project
+  .enablePlugins(JmhPlugin)
+  .dependsOn(tools % "test->test")
+  .settings(
+    //scalaVersion := sbt10ScalaVersion,
+    sourceDirectory in Jmh := (sourceDirectory in Test).value,
+    classDirectory in Jmh := (classDirectory in Test).value,
+    dependencyClasspath in Jmh := (dependencyClasspath in Test).value,
+    compile in Jmh := (compile in Jmh).dependsOn(compile in Test).value,
+    run in Jmh := (run in Jmh).dependsOn(Keys.compile in Jmh).evaluated,
+    libraryDependencies += "ch.epfl.scala" %% "bloop-config" % "1.2.5",
+    javaOptions in Test ++= (javaOptions in Test in tools).value,
+    javaOptions in Jmh ++= (javaOptions in Test in tools).value
+    //javaOptions in run in Jmh ++= List("-XX:+UnlockDiagnosticVMOptions", "-XX:+DebugNonSafepoints")
+  )
 
 lazy val nscplugin =
   project

@@ -12,6 +12,11 @@ sealed abstract class Global {
   final def mangle: String =
     Mangle(this)
 }
+trait CacheHashCode { self: Product =>
+  // Cache hash code here so that `Dag.toDotGraph` doesn't recompute it all the time
+  override lazy val hashCode: Int = scala.util.hashing.MurmurHash3.productHash(self)
+}
+
 object Global {
   final case object None extends Global {
     override def top: Global.Top =

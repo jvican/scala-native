@@ -69,9 +69,10 @@ object VirtualDirectory {
                        StandardOpenOption.TRUNCATE_EXISTING)
 
     override def read(path: Path): ByteBuffer = {
-      val bytes  = Files.readAllBytes(resolve(path))
-      val buffer = ByteBuffer.wrap(bytes)
-      buffer
+      //import java.nio.channels.FileChannel
+      //val channel = FileChannel.open(resolve(path), StandardOpenOption.READ)
+      //channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size())
+      ByteBuffer.wrap(Files.readAllBytes(resolve(path)))
     }
 
     override def write(path: Path, buffer: ByteBuffer): Unit = {
@@ -96,6 +97,11 @@ object VirtualDirectory {
 
   private final class JarDirectory(path: Path)(implicit in: Scope)
       extends NioDirectory {
+
+    //override def read(path: Path): ByteBuffer = {
+    //  ByteBuffer.wrap(Files.readAllBytes(resolve(path)))
+    //}
+
     private val fileSystem: FileSystem =
       acquire {
         val uri = URI.create(s"jar:${path.toUri}")

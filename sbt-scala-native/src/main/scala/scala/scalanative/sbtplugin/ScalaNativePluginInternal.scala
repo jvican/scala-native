@@ -182,6 +182,7 @@ object ScalaNativePluginInternal {
         val tests      = (definedTests in Test).value
         val output     = sourceManaged.value / "FrameworksMap.scala"
         IO.write(output, makeTestMain(frameworks, tests))
+        println(s"Writing frameworks map to ${output}")
         Seq(output)
       }.taskValue,
       loadedTestFrameworks := {
