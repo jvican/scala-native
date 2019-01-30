@@ -257,9 +257,6 @@ lazy val util =
     .in(file("util"))
     .settings(toolSettings)
     .settings(mavenPublishSettings)
-    .settings(
-      libraryDependencies += "org.zeroturnaround" % "zt-zip" % "1.13"
-    )
 
 lazy val nir =
   project
@@ -355,8 +352,7 @@ lazy val nscplugin =
       ),
       libraryDependencies ++= Seq(
         "org.scala-lang" % "scala-compiler" % scalaVersion.value,
-        "org.scala-lang" % "scala-reflect"  % scalaVersion.value,
-        "org.zeroturnaround" % "zt-zip" % "1.13"
+        "org.scala-lang" % "scala-reflect"  % scalaVersion.value
       )
     )
 

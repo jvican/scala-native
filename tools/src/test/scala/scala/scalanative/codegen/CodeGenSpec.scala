@@ -31,8 +31,7 @@ abstract class CodeGenSpec extends OptimizerSpec {
           val workdir = VirtualDirectory.real(config.workdir)
           val outfile = Paths.get("out.ll")
 
-          // TODO: Think what to do with this
-          //assert(workdir.contains(outfile), "out.ll not found.")
+          assert(workdir.contains(outfile), "out.ll not found.")
 
           f(config, optimized, outfile)
         }

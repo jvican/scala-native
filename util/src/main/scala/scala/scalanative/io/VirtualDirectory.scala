@@ -7,27 +7,22 @@ import java.net.URI
 import java.nio.ByteBuffer
 import java.nio.file._
 import java.nio.channels._
-import java.nio.charset.StandardCharsets
 import scalanative.util.{acquire, defer, Scope}
 
 sealed trait VirtualDirectory {
-  type IRPath
 
   /** Check if file with given path is in the directory. */
-  def contains(path: IRPath): Boolean =
-    irFilePaths.contains(path)
-
-  /** Obtain the id associated with the path of an IR file. */
-  def id(path: IRPath): String
+  def contains(path: Path): Boolean =
+    files.contains(path)
 
   /** Reads a contents of file with given path. */
-  def read(path: IRPath)(implicit scope: Scope): ByteBuffer
+  def read(path: Path)(implicit scope: Scope): ByteBuffer
 
   /** Replaces contents of file with given value. */
   def write(path: Path, buffer: ByteBuffer): Unit
 
-  /** List all ir files in this directory. */
-  def irFilePaths: Seq[IRPath]
+  /** List all files in this directory. */
+  def files: Seq[Path]
 }
 
 object VirtualDirectory {
@@ -58,39 +53,24 @@ object VirtualDirectory {
       jar(file)
     } else {
       throw new UnsupportedOperationException(
-        "Neither a jar, nor a directory: " + file
-      )
+        "Neither a jar, nor a directory: " + file)
     }
 
   /** Empty directory that contains no files. */
   val empty: VirtualDirectory = EmptyDirectory
 
-  private final class LocalDirectory(path: Path) extends VirtualDirectory {
-    case class IRPath(ir: Path)
+  private trait NioDirectory extends VirtualDirectory {
+    protected def resolve(path: Path): Path = path
 
-    def id(path: IRPath): String = {
-      val fileName = path.ir.getFileName.toString.stripSuffix(".nir")
-      val parent   = path.ir.getParent
-      if (parent == null) fileName
-      else parent.resolve(fileName).asScala.mkString(".")
-    }
+    protected def open(path: Path) =
+      FileChannel.open(path,
+                       StandardOpenOption.CREATE,
+                       StandardOpenOption.WRITE,
+                       StandardOpenOption.TRUNCATE_EXISTING)
 
-    private def resolve(path: Path): Path =
-      this.path.resolve(path)
-
-    private def open(path: Path) =
-      FileChannel.open(
-        path,
-        StandardOpenOption.CREATE,
-        StandardOpenOption.WRITE,
-        StandardOpenOption.TRUNCATE_EXISTING
-      )
-
-    override def read(path: IRPath)(implicit scope: Scope): ByteBuffer = {
+    override def read(path: Path)(implicit scope: Scope): ByteBuffer = {
       import java.nio.channels.FileChannel
-      val channel = acquire(
-        FileChannel.open(resolve(path.ir), StandardOpenOption.READ)
-      )
+      val channel = acquire(FileChannel.open(resolve(path), StandardOpenOption.READ))
       channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size())
     }
 
@@ -99,85 +79,56 @@ object VirtualDirectory {
       try channel.write(buffer)
       finally channel.close
     }
+  }
 
-    override final val irFilePaths: Seq[IRPath] = {
-      val allFilesIterator = Files
+  private final class LocalDirectory(path: Path) extends NioDirectory {
+    override protected def resolve(path: Path): Path =
+      this.path.resolve(path)
+
+    override def files: Seq[Path] =
+      Files
         .walk(path, Integer.MAX_VALUE, FileVisitOption.FOLLOW_LINKS)
         .iterator()
         .asScala
-      allFilesIterator.flatMap { fp =>
-        if (!fp.getFileName().toString.endsWith(".nir")) Nil
-        else List(IRPath(path.relativize(fp)))
-      }.toList
-    }
+        .map(fp => path.relativize(fp))
+        .toSeq
   }
 
-  private final class JarDirectory(path: Path)(implicit scope: Scope)
-      extends VirtualDirectory {
-    import java.util.zip.ZipEntry
-    type IRPath = ZipEntry
+  private final class JarDirectory(path: Path)(implicit scope: Scope) extends NioDirectory {
+    override def read(path: Path)(implicit scope: Scope): ByteBuffer = {
+      ByteBuffer.wrap(Files.readAllBytes(resolve(path)))
+    }
 
-    def id(path: IRPath): String = {
-      @scala.annotation.tailrec
-      def replace(
-          b: StringBuilder,
-          lastIndex: Int,
-          before: String,
-          after: String
-      ): StringBuilder = {
-        val index = b.indexOf(before, lastIndex)
-        if (index == -1) b
-        else {
-          replace(b.replace(index, index + 1, after), index, before, after)
+    private val fileSystem: FileSystem =
+      acquire {
+        val uri = URI.create(s"jar:${path.toUri}")
+        try {
+          FileSystems.newFileSystem(uri, Map("create" -> "false", "useTempFile" -> "true").asJava)
+        } catch {
+          case e: FileSystemAlreadyExistsException =>
+            FileSystems.getFileSystem(uri)
         }
       }
 
-      val builder = new StringBuilder(path.getName)
-      // Remove starting `/` and ending `.nir` from the path
-      val length = builder.length
-      val pruned = builder.delete(length - 4, length)
-      replace(pruned, 0, "/", ".").result()
-    }
+    override def files: Seq[Path] = {
+      val roots = fileSystem.getRootDirectories.asScala.toSeq
 
-    import org.zeroturnaround.zip.{ZipUtil, ZipInfoCallback}
-    private val zipFile = path.toFile
-    override def read(path: IRPath)(implicit scope: Scope): ByteBuffer = {
-      val name = path.getName()
-      ByteBuffer.wrap(
-        ZipUtil.unpackEntry(zipFile, name, StandardCharsets.UTF_8)
-      )
-    }
-
-    override def write(path: Path, buffer: ByteBuffer): Unit = {
-      ???
-    }
-
-    override final val irFilePaths: Seq[IRPath] = {
-      val nirFiles = mutable.UnrolledBuffer.empty[IRPath]
-      ZipUtil.iterate(zipFile, new ZipInfoCallback() {
-        def process(entry: ZipEntry): Unit = {
-          if (entry.getName().endsWith(".nir")) {
-            nirFiles += new IRPath(entry)
-          }
+      roots
+        .flatMap { path =>
+          Files
+            .walk(path, Integer.MAX_VALUE, FileVisitOption.FOLLOW_LINKS)
+            .iterator()
+            .asScala
         }
-      })
-      nirFiles
     }
   }
 
   private final object EmptyDirectory extends VirtualDirectory {
-    final class IRPath
-    override final val irFilePaths = Seq.empty
+    override def files = Seq.empty
 
-    def id(path: IRPath): String =
+    override def read(path: Path)(implicit scope: Scope): ByteBuffer =
       throw new UnsupportedOperationException(
-        "Can't obtain an id for IR path from an empty directory."
-      )
-
-    override def read(path: IRPath)(implicit scope: Scope): ByteBuffer =
-      throw new UnsupportedOperationException(
-        "Can't read from empty directory."
-      )
+        "Can't read from empty directory.")
 
     override def write(path: Path, buffer: ByteBuffer): Unit =
       throw new UnsupportedOperationException("Can't write to empty directory.")
