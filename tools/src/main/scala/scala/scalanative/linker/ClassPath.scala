@@ -28,14 +28,14 @@ object ClassPath {
     new Impl(directory)
 
   private final class Impl(directory: VirtualDirectory) extends ClassPath {
-    private val files =
-      directory.files
-        .filter(_.toString.endsWith(".nir"))
-        .map { file =>
-          val name = Global.Top(io.packageNameFromPath(file))
-          name -> file
-        }
-        .toMap
+    private val files = {
+      val m = mutable.HashMap.empty[Global.Top, directory.IRPath]
+      directory.irFilePaths.foreach { file =>
+        val key = Global.Top(directory.id(file))
+        m.put(key, file)
+      }
+      m
+    }
 
     private val cache =
       mutable.Map.empty[Global, Option[Seq[Defn]]]
