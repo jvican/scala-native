@@ -11,7 +11,7 @@ import scala.scalanative.util.Scope
 final class BinaryDeserializer(buffer: ByteBuffer, scope: Scope) {
   import buffer._
 
-  private val header: Map[Global, Int] = {
+  private val reversedHeader: List[(Global, Int)] = {
     buffer.position(0)
 
     val magic    = getInt
@@ -24,19 +24,24 @@ final class BinaryDeserializer(buffer: ByteBuffer, scope: Scope) {
       "Can't read binary-incompatible version of NIR."
     )
 
-    val pairs = getSeq((getGlobal, getInt))
-    val map   = pairs.toMap
-    map
+    var seq = List.empty[(Global, Int)]
+    var i: Int       = 1
+    val end          = getInt
+    while (i <= end) {
+      seq = (getGlobal, getInt) :: seq
+      i += 1
+    }
+    seq
   }
 
-  final def globals: Set[Global] = header.keySet
+  //final def globals: Set[Global] = header.keySet
 
   final def deserialize(): Seq[Defn] = {
-    val allDefns = mutable.UnrolledBuffer.empty[Defn]
-    header.foreach {
+    var allDefns = List.empty[Defn]
+    reversedHeader.foreach {
       case (g, offset) =>
         buffer.position(offset)
-        allDefns += getDefn
+        allDefns = getDefn :: allDefns
     }
     scope.close()
     allDefns
@@ -46,9 +51,9 @@ final class BinaryDeserializer(buffer: ByteBuffer, scope: Scope) {
   private def getSeq[T: ClassTag](getT: => T): Seq[T] = {
     var i: Int       = 1
     val end          = getInt
-    val seq = mutable.UnrolledBuffer.empty[T]
+    var seq = List.empty[T]
     while (i <= end) {
-      seq += getT
+      seq ::= getT
       i += 1
     }
     seq
@@ -59,24 +64,24 @@ final class BinaryDeserializer(buffer: ByteBuffer, scope: Scope) {
 
   private def getInts(): Seq[Int] = {
     var i: Int         = 1
-    val end            = getInt
-    val seq = mutable.UnrolledBuffer.empty[Int]
+    var end            = getInt
+    var seq = List.empty[Int]
     while (i <= end) {
-      seq += getInt
+      seq ::= getInt
       i += 1
     }
-    seq
+    seq.reverse
   }
 
   private def getStrings(): Seq[String] = {
     var i: Int            = 1
-    val end               = getInt
-    val seq = mutable.UnrolledBuffer.empty[String]
+    var end               = getInt
+    var seq = List.empty[String]
     while (i <= end) {
-      seq += getString
+      seq ::= getString
       i += 1
     }
-    seq
+    seq.reverse
   }
 
   private def getString(): String = {
@@ -113,7 +118,17 @@ final class BinaryDeserializer(buffer: ByteBuffer, scope: Scope) {
 
   private def getBool(): Boolean = get != 0
 
-  private def getAttrs(): Attrs = Attrs.fromSeq(getSeq(getAttr))
+  private def getAttrs(): Attrs = {
+    var i: Int       = 1
+    val end          = getInt
+    var seq = List.empty[Attr]
+    while (i <= end) {
+      seq ::= getAttr
+      i += 1
+    }
+    Attrs.fromSeq(seq.reverse)
+  }
+
   private def getAttr(): Attr = getInt match {
     case T.MayInlineAttr    => Attr.MayInline
     case T.InlineHintAttr   => Attr.InlineHint
@@ -148,7 +163,16 @@ final class BinaryDeserializer(buffer: ByteBuffer, scope: Scope) {
     case T.XorBin  => Bin.Xor
   }
 
-  private def getInsts(): Seq[Inst] = getSeq(getInst)
+  private def getInsts(): Seq[Inst] = {
+    var i: Int       = 1
+    val end          = getInt
+    var seq = List.empty[Inst]
+    while (i <= end) {
+      seq ::= getInst
+      i += 1
+    }
+    seq.reverse
+  }
   private def getInst(): Inst = getInt match {
     case T.LabelInst       => Inst.Label(getLocal, getParams)
     case T.LetInst         => Inst.Let(getLocal, getOp, Next.None)
@@ -196,7 +220,16 @@ final class BinaryDeserializer(buffer: ByteBuffer, scope: Scope) {
     case T.BitcastConv  => Conv.Bitcast
   }
 
-  private def getDefns(): Seq[Defn] = getSeq(getDefn)
+  private def getDefns(): Seq[Defn] = {
+    var i: Int       = 1
+    val end          = getInt
+    var seq = List.empty[Defn]
+    while (i <= end) {
+      seq ::= getDefn
+      i += 1
+    }
+    seq.reverse
+  }
   private def getDefn(): Defn = getInt match {
     case T.VarDefn =>
       Defn.Var(getAttrs, getGlobal, getType, getVal)
@@ -220,7 +253,16 @@ final class BinaryDeserializer(buffer: ByteBuffer, scope: Scope) {
       Defn.Module(getAttrs, getGlobal, getGlobalOpt, getGlobals)
   }
 
-  private def getGlobals(): Seq[Global]      = getSeq(getGlobal)
+  private def getGlobals(): Seq[Global] = {
+    var i: Int       = 1
+    val end          = getInt
+    var seq = List.empty[Global]
+    while (i <= end) {
+      seq ::= getGlobal
+      i += 1
+    }
+    seq.reverse
+  }
   private def getGlobalOpt(): Option[Global] = getOpt(getGlobal)
   private def getGlobal(): Global = getInt match {
     case T.NoneGlobal =>
@@ -244,7 +286,16 @@ final class BinaryDeserializer(buffer: ByteBuffer, scope: Scope) {
   private def getLocal(): Local =
     Local(getLong)
 
-  private def getNexts(): Seq[Next] = getSeq(getNext)
+  private def getNexts(): Seq[Next] = {
+    var i: Int       = 1
+    val end          = getInt
+    var seq = List.empty[Next]
+    while (i <= end) {
+      seq ::= getNext
+      i += 1
+    }
+    seq.reverse
+  }
   private def getNext(): Next = getInt match {
     case T.NoneNext   => Next.None
     case T.UnwindNext => Next.Unwind(getParam, getNext)
@@ -285,10 +336,28 @@ final class BinaryDeserializer(buffer: ByteBuffer, scope: Scope) {
     case T.ArraylengthOp => Op.Arraylength(getVal)
   }
 
-  private def getParams(): Seq[Val.Local] = getSeq(getParam)
+  private def getParams(): Seq[Val.Local] = {
+    var i: Int       = 1
+    val end          = getInt
+    var seq = List.empty[Val.Local]
+    while (i <= end) {
+      seq ::= getParam
+      i += 1
+    }
+    seq.reverse
+  }
   private def getParam(): Val.Local       = Val.Local(getLocal, getType)
 
-  private def getTypes(): Seq[Type] = getSeq(getType)
+  private def getTypes(): Seq[Type] = {
+    var i: Int       = 1
+    val end          = getInt
+    var seq = List.empty[Type]
+    while (i <= end) {
+      seq ::= getType
+      i += 1
+    }
+    seq.reverse
+  }
   private def getType(): Type = getInt match {
     case T.VarargType      => Type.Vararg
     case T.PtrType         => Type.Ptr
@@ -313,7 +382,16 @@ final class BinaryDeserializer(buffer: ByteBuffer, scope: Scope) {
     case T.RefType     => Type.Ref(getGlobal, getBool, getBool)
   }
 
-  private def getVals(): Seq[Val] = getSeq(getVal)
+  private def getVals(): Seq[Val] = {
+    var i: Int       = 1
+    val end          = getInt
+    var seq = List.empty[Val]
+    while (i <= end) {
+      seq ::= getVal
+      i += 1
+    }
+    seq.reverse
+  }
   private def getVal(): Val = getInt match {
     case T.TrueVal        => Val.True
     case T.FalseVal       => Val.False
