@@ -6,34 +6,36 @@ import scalanative.nir._
 import scalanative.codegen.Metadata
 
 final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoader) {
-  val unavailable = mutable.Set.empty[Global]
-  val loaded      = mutable.Map.empty[Global, mutable.Map[Global, Defn]]
-  val enqueued    = mutable.Set.empty[Global]
+  import java.util.{HashSet, HashMap}
+  val unavailable = new HashSet[Global]
+  val loaded      = new HashMap[Global, mutable.Map[Global, Defn]]
+  val enqueued    = new HashSet[Global]
   val todo        = mutable.Stack.empty[Global]
-  val done        = mutable.Map.empty[Global, Defn]
+  val done        = new HashMap[Global, Defn]
   val stack       = mutable.Stack.empty[Global]
-  val links       = mutable.Set.empty[Attr.Link]
-  val infos       = mutable.Map.empty[Global, Info]
+  val links       = new HashSet[Attr.Link]
+  val infos       = new HashMap[Global, Info]
 
-  val dyncandidates = mutable.Map.empty[Sig, mutable.Set[Global]]
-  val dynsigs       = mutable.Set.empty[Sig]
-  val dynimpls      = mutable.Set.empty[Global]
+  val dyncandidates = new HashMap[Sig, mutable.Set[Global]]
+  val dynsigs       = new HashSet[Sig]
+  val dynimpls      = new HashSet[Global]
 
   entries.foreach(reachEntry)
 
+  import scala.collection.JavaConverters._
   def result(): Result = {
     cleanup()
 
     val defns = mutable.UnrolledBuffer.empty[Defn]
-    defns ++= done.valuesIterator
+    defns ++= done.asScala.valuesIterator
 
-    new Result(infos,
+    new Result(infos.asScala,
                entries,
-               unavailable.toSeq,
-               links.toSeq,
+               unavailable.asScala.toList,
+               links.asScala.toList,
                defns,
-               dynsigs.toSeq,
-               dynimpls.toSeq)
+               dynsigs.asScala.toList,
+               dynimpls.asScala.toList)
   }
 
   def cleanup(): Unit = {
@@ -41,12 +43,12 @@ final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoade
     // responds map of every class. Optimizer and
     // codegen may never increase reachability past
     // what's known now, so it's safe to do this.
-    infos.values.foreach {
+    infos.asScala.values.foreach {
       case cls: Class =>
         val entries = cls.responds.toArray
         entries.foreach {
           case (sig, name) =>
-            if (!done.contains(name)) {
+            if (!done.containsKey(name) && !unavailable.contains(name)) {
               cls.responds -= sig
             }
         }
@@ -57,26 +59,27 @@ final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoade
 
   def lookup(global: Global): Option[Defn] = {
     val owner = global.top
-    if (!loaded.contains(owner) && !unavailable.contains(owner)) {
-      loader
-        .load(owner)
-        .fold[Unit] {
-          unavailable += owner
-        } { defns =>
+    val defns = loaded.get(owner)
+    if (defns == null && !unavailable.contains(owner)) {
+      loader.load(owner) match {
+        case Some(defns) =>
           val scope = mutable.Map.empty[Global, Defn]
-          defns.foreach { defn =>
-            scope(defn.name) = defn
-          }
-          loaded(owner) = scope
-        }
+          defns.foreach(defn => scope(defn.name) = defn)
+          loaded.put(owner, scope)
+          scope.get(global)
+        case None =>
+          unavailable.add(owner)
+          None
+      }
+    } else {
+      defns.get(global)
     }
-    loaded.get(owner).flatMap(_.get(global))
   }
 
   def process(): Unit =
     while (todo.nonEmpty) {
       val name = todo.pop()
-      if (!done.contains(name)) {
+      if (!done.containsKey(name) && !unavailable.contains(name)) {
         reachDefn(name)
       }
     }
@@ -116,7 +119,7 @@ final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoade
       case defn: Defn.Module =>
         reachModule(defn)
     }
-    done(defn.name) = defn
+    done.put(defn.name, defn)
   }
 
   def reachEntry(name: Global): Unit = {
@@ -124,33 +127,37 @@ final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoade
       reachEntry(name.top)
     }
     reachGlobalNow(name)
-    infos.get(name) match {
-      case Some(cls: Class) =>
-        if (!cls.attrs.isAbstract) {
-          reachAllocation(cls)
-          if (cls.isModule) {
-            val init = cls.name.member(Sig.Ctor(Seq()))
-            if (loaded(cls.name).contains(init)) {
-              reachGlobal(init)
+    val info = infos.get(name)
+    if (info != null) {
+      info match {
+        case cls: Class =>
+          if (!cls.attrs.isAbstract) {
+            reachAllocation(cls)
+            if (cls.isModule) {
+              val init = cls.name.member(Sig.Ctor(Seq()))
+              val defns = loaded.get(cls.name)
+              if (defns != null && defns.contains(init)) {
+                reachGlobal(init)
+              }
             }
           }
-        }
-      case _ =>
-        ()
+        case _ => ()
+      }
     }
   }
 
   def reachGlobal(name: Global): Unit =
     if (!enqueued.contains(name) && name.ne(Global.None)) {
-      enqueued += name
+      enqueued.add(name)
       todo.push(name)
     }
 
-  def reachGlobalNow(name: Global): Unit =
-    if (done.contains(name)) {
+  def reachGlobalNow(name: Global): Unit = {
+    val isDone = done.containsKey(name) || unavailable.contains(name)
+    if (isDone) {
       ()
     } else if (!stack.contains(name)) {
-      enqueued += name
+      enqueued.add(name)
       reachDefn(name)
     } else {
       val lines = (s"cyclic reference to ${name.show}:" +:
@@ -158,9 +165,10 @@ final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoade
       val msg = lines.mkString("\n")
       throw new Exception(msg)
     }
+  }
 
   def newInfo(info: Info): Unit = {
-    infos(info.name) = info
+    infos.put(info.name, info)
     info match {
       case info: MemberInfo =>
         info.owner match {
@@ -200,26 +208,29 @@ final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoade
         info.parent.foreach { parentInfo =>
           info.responds ++= parentInfo.responds
         }
-        loaded(info.name).foreach {
-          case (_, defn: Defn.Define) =>
-            val Global.Member(_, sig) = defn.name
-            def update(sig: Sig): Unit = {
-              info.responds(sig) = resolve(info, sig).get
-            }
-            sig match {
-              case Rt.JavaEqualsSig =>
-                update(Rt.ScalaEqualsSig)
-                update(Rt.JavaEqualsSig)
-              case Rt.JavaHashCodeSig =>
-                update(Rt.ScalaHashCodeSig)
-                update(Rt.JavaHashCodeSig)
-              case sig @ (_: Sig.Method | _: Sig.Ctor) =>
-                update(sig)
-              case _ =>
-                ()
-            }
-          case _ =>
-            ()
+        val defns = loaded.get(info.name)
+        if (defns != null) {
+          defns.foreach {
+            case (_, defn: Defn.Define) =>
+              val Global.Member(_, sig) = defn.name
+              def update(sig: Sig): Unit = {
+                info.responds(sig) = resolve(info, sig).get
+              }
+              sig match {
+                case Rt.JavaEqualsSig =>
+                  update(Rt.ScalaEqualsSig)
+                  update(Rt.JavaEqualsSig)
+                case Rt.JavaHashCodeSig =>
+                  update(Rt.ScalaHashCodeSig)
+                  update(Rt.JavaHashCodeSig)
+                case sig @ (_: Sig.Method | _: Sig.Ctor) =>
+                  update(sig)
+                case _ =>
+                  ()
+              }
+            case _ =>
+              ()
+          }
         }
       case _ =>
         ()
@@ -259,11 +270,19 @@ final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoade
         case (sig: Sig.Method, impl) =>
           val dynsig = sig.toProxy
           if (!dynsigs.contains(dynsig)) {
-            val buf =
-              dyncandidates.getOrElseUpdate(dynsig, mutable.Set.empty[Global])
-            buf += impl
+            val previousSet = dyncandidates.get(dynsig)
+            val buffer = {
+              if (previousSet != null) previousSet
+              else {
+                val newSet = mutable.Set.empty[Global]
+                dyncandidates.put(dynsig, newSet)
+                newSet
+              }
+            }
+
+            buffer += impl
           } else {
-            dynimpls += impl
+            dynimpls.add(impl)
             reachGlobal(impl)
           }
         case _ =>
@@ -273,15 +292,15 @@ final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoade
 
   def scopeInfo(name: Global): Option[ScopeInfo] = {
     reachGlobalNow(name)
-    infos(name) match {
+    infos.get(name) match {
       case info: ScopeInfo => Some(info)
-      case _               => None
+      case _ => None
     }
   }
 
   def scopeInfoOrUnavailable(name: Global): Info = {
     reachGlobalNow(name)
-    infos(name) match {
+    infos.get(name) match {
       case info: ScopeInfo   => info
       case info: Unavailable => info
       case _                 => util.unreachable
@@ -290,7 +309,7 @@ final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoade
 
   def classInfo(name: Global): Option[Class] = {
     reachGlobalNow(name)
-    infos(name) match {
+    infos.get(name) match {
       case info: Class => Some(info)
       case _           => None
     }
@@ -303,7 +322,7 @@ final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoade
 
   def traitInfo(name: Global): Option[Trait] = {
     reachGlobalNow(name)
-    infos(name) match {
+    infos.get(name) match {
       case info: Trait => Some(info)
       case _           => None
     }
@@ -311,7 +330,7 @@ final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoade
 
   def methodInfo(name: Global): Option[Method] = {
     reachGlobalNow(name)
-    infos(name) match {
+    infos.get(name) match {
       case info: Method => Some(info)
       case _            => None
     }
@@ -319,7 +338,7 @@ final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoade
 
   def fieldInfo(name: Global): Option[Field] = {
     reachGlobalNow(name)
-    infos(name) match {
+    infos.get(name) match {
       case info: Field => Some(info)
       case _           => None
     }
@@ -327,13 +346,7 @@ final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoade
 
   def reachUnavailable(name: Global): Unit = {
     newInfo(new Unavailable(name))
-    unavailable += name
-    // Put a null definition to indicate that name
-    // is effectively done and doesn't need to be
-    // visited any more. This saves us the need to
-    // check the unavailable set every time we check
-    // if something is truly handled.
-    done(name) = null
+    unavailable.add(name)
   }
 
   def reachVar(defn: Defn.Var): Unit = {
@@ -414,7 +427,7 @@ final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoade
   }
 
   def reachAttrs(attrs: Attrs): Unit =
-    links ++= attrs.links
+    attrs.links.foreach(l => links.add(l))
 
   def reachType(ty: Type): Unit = ty match {
     case Type.ArrayValue(ty, n) =>
@@ -536,8 +549,11 @@ final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoade
     case Op.Module(n) =>
       classInfo(n).foreach(reachAllocation)
       val init = n.member(Sig.Ctor(Seq()))
-      if (loaded(n).contains(init)) {
-        reachGlobal(init)
+      val defns = loaded.get(n)
+      if (defns != null) {
+        if (defns.contains(init)) {
+          reachGlobal(init)
+        }
       }
     case Op.As(ty, v) =>
       reachType(ty)
@@ -600,23 +616,25 @@ final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoade
 
   def reachDynamicMethodTargets(dynsig: Sig) = {
     if (!dynsigs.contains(dynsig)) {
-      dynsigs += dynsig
-      if (dyncandidates.contains(dynsig)) {
-        dyncandidates(dynsig).foreach { impl =>
-          dynimpls += impl
+      dynsigs.add(dynsig)
+      val candidates = dyncandidates.get(dynsig)
+      if (candidates != null) {
+        candidates.foreach { impl =>
+          dynimpls.add(impl)
           reachGlobal(impl)
         }
-        dyncandidates -= dynsig
+        dyncandidates.remove(dynsig)
       }
     }
   }
 
   def resolve(cls: Class, sig: Sig): Option[Global] = {
-    assert(loaded.contains(cls.name))
+    //TODO(jvican): Re-enable this assert method
+    //assert(loaded.containsKey(cls.name))
 
     def lookupSig(cls: Class, sig: Sig): Option[Global] = {
       val tryMember = cls.name.member(sig)
-      if (loaded(cls.name).contains(tryMember)) {
+      if (loaded.get(cls.name).contains(tryMember)) {
         Some(tryMember)
       } else {
         cls.parent.flatMap(lookupSig(_, sig))
