@@ -2,7 +2,7 @@ package scala.scalanative
 package nir
 
 sealed abstract class Sig {
-  final def toProxy: Sig.Proxy = this match {
+  final lazy val toProxy: Sig.Proxy = this match {
     case Sig.Method(id, types) =>
       Sig.Proxy(id, types.init)
     case _ =>
