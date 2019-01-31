@@ -331,9 +331,9 @@ lazy val benchmarks = project
     dependencyClasspath in Jmh := (dependencyClasspath in Test).value,
     compile in Jmh := (compile in Jmh).dependsOn(compile in Test).value,
     run in Jmh := (run in Jmh).dependsOn(Keys.compile in Jmh).evaluated,
-    libraryDependencies += "ch.epfl.scala" %% "bloop-config" % "1.2.5",
-    javaOptions in Test ++= (javaOptions in Test in tools).value,
-    javaOptions in Jmh ++= (javaOptions in Test in tools).value
+    libraryDependencies += "ch.epfl.scala" %% "bloop-config" % "1.2.5"
+    //javaOptions in Test ++= (javaOptions in Test in tools).value,
+    //javaOptions in Jmh ++= (javaOptions in Test in tools).value ++ List("-XX:+UnlockCommercialFeatures", "-XX:+FlightRecorder")
     //javaOptions in run in Jmh ++= List("-XX:+UnlockDiagnosticVMOptions", "-XX:+DebugNonSafepoints")
   )
 
