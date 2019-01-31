@@ -231,21 +231,9 @@ final class BinaryDeserializer(buffer: ByteBuffer, scope: Scope) {
     case T.NoneGlobal =>
       Global.None
     case T.TopGlobal =>
-      cacheGlobal(Global.Top(getString))
+      Global.Top(getString)
     case T.MemberGlobal =>
-      Global.Member(cacheGlobal(Global.Top(getString)), getSig)
-  }
-
-  import BinaryDeserializer.internedGlobals
-  private def cacheGlobal(g: Global): Global = {
-    val ref = internedGlobals.get(g)
-    if (ref == null) {
-      val ref = new java.lang.ref.WeakReference(g)
-      internedGlobals.put(g, ref)
-      g
-    } else {
-      ref.get()
-    }
+      Global.Member(Global.Top(getString), getSig)
   }
 
   private def getSig(): Sig = getInt match {
@@ -305,19 +293,7 @@ final class BinaryDeserializer(buffer: ByteBuffer, scope: Scope) {
   private def getParams(): Seq[Val.Local] = getSeq(getParam)
   private def getParam(): Val.Local       = Val.Local(getLocal, getType)
 
-  import BinaryDeserializer.internedTypes
   private def getTypes(): Seq[Type] = getSeq(getType)
-  private def cacheType(tpe: Type): Type = {
-    val ref = internedTypes.get(tpe)
-    if (ref == null) {
-      val ref = new java.lang.ref.WeakReference(tpe)
-      internedTypes.put(tpe, ref)
-      tpe
-    } else {
-      ref.get()
-    }
-  }
-
   private def getType(): Type = getInt match {
     case T.VarargType      => Type.Vararg
     case T.PtrType         => Type.Ptr
@@ -373,14 +349,4 @@ object BinaryDeserializer {
   private[serialization] val sharedArr256 = new Array[Byte](256)
   private[serialization] val sharedArr512 = new Array[Byte](512)
   private[serialization] val sharedArr4096 = new Array[Byte](4096)
-
-  import java.util.WeakHashMap
-  import java.lang.ref.WeakReference
-  private[scalanative] val internedGlobals
-      : WeakHashMap[Global, WeakReference[Global]] =
-    new WeakHashMap[Global, WeakReference[Global]]()
-
-  private[scalanative] val internedTypes
-      : WeakHashMap[Type, WeakReference[Type]] =
-    new WeakHashMap[Type, WeakReference[Type]]()
 }
