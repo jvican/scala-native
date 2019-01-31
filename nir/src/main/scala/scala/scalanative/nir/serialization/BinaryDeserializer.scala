@@ -42,15 +42,16 @@ final class BinaryDeserializer(buffer: ByteBuffer, scope: Scope) {
     allDefns
   }
 
-  private def getSeq[T](getT: => T): Seq[T] = {
+  import scala.reflect.ClassTag
+  private def getSeq[T: ClassTag](getT: => T): Seq[T] = {
     var i: Int       = 1
     val end          = getInt
-    var seq: List[T] = Nil
+    val seq = mutable.UnrolledBuffer.empty[T]
     while (i <= end) {
-      seq = getT :: seq
+      seq += getT
       i += 1
     }
-    seq.reverse
+    seq
   }
 
   private def getOpt[T](getT: => T): Option[T] =
@@ -59,23 +60,23 @@ final class BinaryDeserializer(buffer: ByteBuffer, scope: Scope) {
   private def getInts(): Seq[Int] = {
     var i: Int         = 1
     val end            = getInt
-    var seq: List[Int] = Nil
+    val seq = mutable.UnrolledBuffer.empty[Int]
     while (i <= end) {
-      seq = getInt :: seq
+      seq += getInt
       i += 1
     }
-    seq.reverse
+    seq
   }
 
   private def getStrings(): Seq[String] = {
     var i: Int            = 1
     val end               = getInt
-    var seq: List[String] = Nil
+    val seq = mutable.UnrolledBuffer.empty[String]
     while (i <= end) {
-      seq = getString :: seq
+      seq += getString
       i += 1
     }
-    seq.reverse
+    seq
   }
 
   private def getString(): String = {
