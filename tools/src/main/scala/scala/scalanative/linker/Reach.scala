@@ -245,44 +245,20 @@ final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoade
       // on this class. This includes virtual calls
       // on the traits that this class implements and
       // calls on all transitive parents.
-      val calls = new HashSet[Sig]()
-      info.calls.foreach(call => calls.add(call))
+      val calls = mutable.Set.empty[Sig]
+      calls ++= info.calls
       def loopParent(parentInfo: Class): Unit = {
-        parentInfo.calls.foreach(call => calls.add(call))
-        // Inline `loopparents` two levels deep for performance reasons
-        parentInfo.parent.foreach { p1 =>
-          p1.calls.foreach(call => calls.add(call))
-          p1.parent.foreach { p2 =>
-            p2.calls.foreach(call => calls.add(call))
-            p2.parent.foreach(loopParent)
-          }
-        }
-
-        // Inline `loopTraits` two levels deep for performance reasons
-        parentInfo.traits.foreach { t1 =>
-          t1.calls.foreach(call => calls.add(call))
-          t1.traits.foreach { t2 =>
-            t2.calls.foreach(call => calls.add(call))
-            t2.traits.foreach(loopTraits)
-          }
-        }
+        calls ++= parentInfo.calls
+        parentInfo.parent.foreach(loopParent)
+        parentInfo.traits.foreach(loopTraits)
       }
-
       def loopTraits(traitInfo: Trait): Unit = {
-        // Inline `loopTraits` two levels deep for performance reasons
-        traitInfo.calls.foreach(call => calls.add(call))
-        traitInfo.traits.foreach { t1 =>
-          t1.calls.foreach(call => calls.add(call))
-          t1.traits.foreach { t2 =>
-            t2.calls.foreach(call => calls.add(call))
-            t2.traits.foreach(loopTraits)
-          }
-        }
+        calls ++= traitInfo.calls
+        traitInfo.traits.foreach(loopTraits)
       }
-
       info.parent.foreach(loopParent)
       info.traits.foreach(loopTraits)
-      calls.asScala.foreach { sig =>
+      calls.foreach { sig =>
         info.responds.get(sig).foreach(reachGlobal)
       }
 
