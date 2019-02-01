@@ -253,7 +253,8 @@ trait Eval { self: Interflow =>
               case ExactClassRef(cls, _) =>
                 cls.resolve(sig).toSeq
               case ScopeRef(scope) =>
-                scope.targets(sig)
+                import scala.collection.JavaConverters._
+                scope.targets(sig).asScala.toSeq
               case _ =>
                 bailOut
             }

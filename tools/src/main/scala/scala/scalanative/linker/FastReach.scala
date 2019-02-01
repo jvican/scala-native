@@ -1,4 +1,4 @@
-package scala.scalanative
+/*package scala.scalanative
 package linker
 
 import scala.collection.mutable
@@ -680,4 +680,4 @@ class FastReach(config: build.Config, entries: Seq[Global], loader: ClassLoader)
         lookupSig(cls, sig)
     }
   }
-}
+}*/

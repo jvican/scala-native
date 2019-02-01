@@ -204,7 +204,8 @@ final class Check(implicit linked: linker.Result) {
         case Type.Null =>
           ok
         case ScopeRef(info) =>
-          info.implementors.foreach { cls =>
+          import scala.collection.JavaConverters._
+          info.implementors.asScala.foreach { cls =>
             if (cls.allocated) {
               if (cls.resolve(sig).isEmpty) {
                 error(s"can't call ${sig.show} on ${cls.name.show}")

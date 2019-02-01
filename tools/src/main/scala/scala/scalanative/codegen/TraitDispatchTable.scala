@@ -4,6 +4,7 @@ package codegen
 import scala.collection.mutable
 import scalanative.nir._
 import scalanative.linker.{Method, Trait, Class}
+import scala.collection.JavaConverters._
 
 class TraitDispatchTable(meta: Metadata) {
   val dispatchName                          = Global.Top("__dispatch")
@@ -18,7 +19,7 @@ class TraitDispatchTable(meta: Metadata) {
     // go through vtable dispatch.
     val sigs = mutable.Set.empty[Sig]
     meta.traits.foreach { trt =>
-      trt.calls.foreach { sig =>
+      trt.calls.asScala.foreach { sig =>
         if (trt.targets(sig).size > 1) {
           sigs += sig
         }
@@ -26,14 +27,14 @@ class TraitDispatchTable(meta: Metadata) {
     }
 
     val Object = meta.linked.infos(Rt.Object.name).asInstanceOf[Class]
-    sigs --= Object.calls
+    sigs --= Object.calls.asScala
 
     sigs.toArray.sortBy(_.toString).zipWithIndex.toMap
   }
 
   val traitClassIds = {
     def isActive(trt: Trait): Boolean =
-      trt.calls.exists { sig =>
+      trt.calls.asScala.exists { sig =>
         traitSigIds.contains(sig)
       } || trt.traits.exists(isActive)
 
