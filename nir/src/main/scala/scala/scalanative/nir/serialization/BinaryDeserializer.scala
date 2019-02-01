@@ -265,20 +265,14 @@ final class BinaryDeserializer(buffer: ByteBuffer, scope: Scope) {
     }
   }
 
-  private def getSig(): Sig = {
-    val kind = getInt
-    kind match {
-      case T.MethodSig => Sig.Method(getString, getTypes)
-      case otherKind =>
-        otherKind match {
-          case T.FieldSig     => Sig.Field(getString)
-          case T.CtorSig      => Sig.Ctor(getTypes)
-          case T.ProxySig     => Sig.Proxy(getString, getTypes)
-          case T.ExternSig    => Sig.Extern(getString)
-          case T.GeneratedSig => Sig.Generated(getString)
-          case T.DuplicateSig => Sig.Duplicate(getSig, getTypes)
-        }
-    }
+  private def getSig(): Sig = getInt match {
+    case T.FieldSig     => Sig.Field(getString)
+    case T.CtorSig      => Sig.Ctor(getTypes)
+    case T.MethodSig    => Sig.Method(getString, getTypes)
+    case T.ProxySig     => Sig.Proxy(getString, getTypes)
+    case T.ExternSig    => Sig.Extern(getString)
+    case T.GeneratedSig => Sig.Generated(getString)
+    case T.DuplicateSig => Sig.Duplicate(getSig, getTypes)
   }
 
   private def getLocal(): Local =
