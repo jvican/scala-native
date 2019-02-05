@@ -229,7 +229,7 @@ final class Reach(
                 case Rt.JavaHashCodeSig =>
                   update(Rt.ScalaHashCodeSig)
                   update(Rt.JavaHashCodeSig)
-                case sig @ (_: Sig.Method | _: Sig.Ctor) =>
+                case sig if sig.isMethod || sig.isCtor =>
                   update(sig)
                 case _ =>
                   ()
@@ -278,7 +278,7 @@ final class Reach(
       while (it.hasNext) {
         val entry = it.next
         entry.getKey match {
-          case sig: Sig.Method =>
+          case sig if sig.isMethod =>
             val impl   = entry.getValue
             val dynsig = sig.toProxy
             if (!dynsigs.contains(dynsig)) {

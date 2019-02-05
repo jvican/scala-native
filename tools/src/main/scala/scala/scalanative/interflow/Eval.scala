@@ -142,7 +142,7 @@ trait Eval { self: Interflow =>
 
             val isDuplicate =
               mmeth match {
-                case Val.Global(Global.Member(_, _: Sig.Duplicate), _) =>
+                case Val.Global(Global.Member(_, sig), _) if sig.isDuplicate =>
                   true
                 case _ =>
                   false
