@@ -4,6 +4,7 @@ package nir
 sealed abstract class Global {
   def top: Global.Top
   def member(sig: Sig): Global.Member
+  def member(sig: Sig.Unmangled): Global.Member = member(sig.mangled)
 
   final def isTop: Boolean =
     this.isInstanceOf[Global.Top]
@@ -38,4 +39,14 @@ object Global {
     override def member(sig: Sig): Global.Member =
       throw new Exception("Global.Member can't have any members.")
   }
+
+  implicit val globalOrdering: Ordering[Global] =
+    Ordering.by[Global, (String, String)] {
+      case Global.Member(Global.Top(id), sig) =>
+        (id, sig.mangle)
+      case Global.Top(id) =>
+        (id, "")
+      case _ =>
+        ("", "")
+    }
 }

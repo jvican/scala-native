@@ -38,6 +38,12 @@ trait NirDefinitions { self: NirGlobalAddons =>
 
     lazy val InlineHintClass = getRequiredClass(
       "scala.scalanative.native.inlinehint")
+    lazy val AlwaysInlineClass = getRequiredClass(
+      "scala.scalanative.native.alwaysinline")
+    lazy val NoOptimizeClass = getRequiredClass(
+      "scala.scalanative.native.nooptimize")
+    lazy val NoSpecializeClass = getRequiredClass(
+      "scala.scalanative.native.nospecialize")
 
     lazy val NativeModule = getRequiredModule(
       "scala.scalanative.native.package")
@@ -159,6 +165,14 @@ trait NirDefinitions { self: NirGlobalAddons =>
       getMember(IntrinsicsModule, TermName("shortToULong"))
     lazy val IntToULongMethod =
       getMember(IntrinsicsModule, TermName("intToULong"))
+    lazy val UIntToFloatMethod =
+      getMember(IntrinsicsModule, TermName("uintToFloat"))
+    lazy val ULongToFloatMethod =
+      getMember(IntrinsicsModule, TermName("ulongToFloat"))
+    lazy val UIntToDoubleMethod =
+      getMember(IntrinsicsModule, TermName("uintToDouble"))
+    lazy val ULongToDoubleMethod =
+      getMember(IntrinsicsModule, TermName("ulongToDouble"))
     lazy val LoadBoolMethod =
       getMember(IntrinsicsModule, TermName("loadBoolean"))
     lazy val LoadCharMethod = getMember(IntrinsicsModule, TermName("loadChar"))

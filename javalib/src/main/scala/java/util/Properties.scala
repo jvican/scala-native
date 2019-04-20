@@ -1,8 +1,10 @@
 package java.util
 
+import java.io.{PrintStream, PrintWriter}
 import java.{util => ju}
 
 import scala.collection.JavaConverters._
+import scala.scalanative.native.stub
 
 class Properties(protected val defaults: Properties)
     extends ju.Hashtable[AnyRef, AnyRef] {
@@ -12,7 +14,11 @@ class Properties(protected val defaults: Properties)
   def setProperty(key: String, value: String): AnyRef =
     put(key, value)
 
+  @stub
   def load(inStream: java.io.InputStream): Unit = ???
+
+  @stub
+  def load(reader: java.io.Reader): Unit = ???
 
   def getProperty(key: String): String =
     getProperty(key, defaultValue = null)
@@ -51,14 +57,34 @@ class Properties(protected val defaults: Properties)
     set
   }
 
+  private def format(entry: ju.Map.Entry[AnyRef, AnyRef]): String = {
+    val key: String   = entry.getKey.asInstanceOf[String]
+    val value: String = entry.getValue.asInstanceOf[String]
+    if (key.length > 40)
+      s"${key.substring(0, 37)}...=$value"
+    else
+      s"$key=$value"
+  }
+
+  def list(out: PrintStream): Unit = {
+    out.println("-- listing properties --")
+    entrySet().asScala.foreach { entry =>
+      out.println(format(entry))
+    }
+  }
+
+  def list(out: PrintWriter): Unit = {
+    out.println("-- listing properties --")
+    entrySet().asScala.foreach { entry =>
+      out.println(format(entry))
+    }
+  }
+
   // TODO:
-  // def load(reader: Reader): Unit
   // @deprecated("", "") def save(out: OutputStream, comments: String): Unit
   // def store(writer: Writer, comments: String): Unit
   // def store(out: OutputStream, comments: String): Unit
   // def loadFromXML(in: InputStream): Unit
   // def storeToXML(os: OutputStream, comment: String): Unit
   // def storeToXML(os: OutputStream, comment: String, encoding: String): Unit
-  // def list(out: PrintStream): Unit
-  // def list(out: PrintWriter): Unit
 }

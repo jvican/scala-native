@@ -10,7 +10,7 @@ import scalanative.util.{Scope, ShowBuilder, unsupported, partitionBy, procs}
 import scalanative.io.{VirtualDirectory, withScratchBuffer}
 import scalanative.nir._
 import scalanative.nir.ControlFlow.{Graph => CFG, Block, Edge}
-import scalanative.util.Stats
+import scalanative.util.unreachable
 
 object CodeGen {
 
@@ -23,6 +23,7 @@ object CodeGen {
 
     val generated = Generate(Global.Top(config.mainClass), defns ++ proxies)
     val lowered   = lower(generated)
+    nir.Show.dump(lowered, "lowered.hnir")
     emit(config, lowered)
   }
 
@@ -43,7 +44,8 @@ object CodeGen {
   }
 
   /** Generate code for given assembly. */
-  private def emit(config: build.Config, assembly: Seq[Defn]): Unit =
+  private def emit(config: build.Config, assembly: Seq[Defn])(
+      implicit meta: Metadata): Unit =
     Scope { implicit in =>
       val env     = assembly.map(defn => defn.name -> defn).toMap
       val workdir = VirtualDirectory.real(config.workdir)
@@ -81,7 +83,7 @@ object CodeGen {
 
   private final class Impl(targetTriple: String,
                            env: Map[Global, Defn],
-                           defns: Seq[Defn]) {
+                           defns: Seq[Defn])(implicit meta: Metadata) {
     import Impl._
 
     var currentBlockName: Local = _
@@ -120,6 +122,8 @@ object CodeGen {
               defn.copy(attrs.copy(isExtern = true))
             case defn @ Defn.Define(attrs, name, ty, _) =>
               Defn.Declare(attrs, name, ty)
+            case _ =>
+              unreachable
           }
         }
         generated += mn
@@ -139,6 +143,7 @@ object CodeGen {
           case Defn.Const(_, _, ty, _)   => ty
           case Defn.Declare(_, _, sig)   => sig
           case Defn.Define(_, _, sig, _) => sig
+          case _                         => unreachable
         }
     }
 
@@ -232,7 +237,7 @@ object CodeGen {
       val isDecl = insts.isEmpty
 
       str(if (isDecl) "declare " else "define ")
-      genType(retty)
+      genFunctionReturnType(retty)
       str(" @")
       genGlobal(name)
       str("(")
@@ -242,12 +247,18 @@ object CodeGen {
         insts.head match {
           case Inst.Label(_, params) =>
             rep(params, sep = ", ")(genVal)
+          case _ =>
+            unreachable
         }
       }
       str(")")
-      if (attrs.inline ne Attr.MayInline) {
-        str(" ")
-        genAttr(attrs.inline)
+      if (attrs.opt eq Attr.NoOpt) {
+        str(" optnone noinline")
+      } else {
+        if (attrs.inline ne Attr.MayInline) {
+          str(" ")
+          genAttr(attrs.inline)
+        }
       }
       if (!attrs.isExtern && !isDecl) {
         str(" ")
@@ -275,6 +286,55 @@ object CodeGen {
         str("}")
 
         copies.clear()
+      }
+    }
+
+    def genFunctionReturnType(retty: Type): Unit = {
+      retty match {
+        case refty: Type.RefKind =>
+          genReferenceTypeAttribute(refty)
+        case _ =>
+          ()
+      }
+      genType(retty)
+    }
+
+    def genFunctionParam(param: Val.Local): Unit = {
+      param.ty match {
+        case refty: Type.RefKind =>
+          genReferenceTypeAttribute(refty)
+        case _ =>
+          ()
+      }
+      genVal(param)
+    }
+
+    def genReferenceTypeAttribute(refty: Type.RefKind): Unit = {
+      val (nonnull, deref, size) = toDereferenceable(refty)
+
+      if (nonnull) {
+        str("nonnull ")
+      }
+      str(deref)
+      str("(")
+      str(size)
+      str(") ")
+    }
+
+    def toDereferenceable(refty: Type.RefKind): (Boolean, String, Long) = {
+      val size = meta.linked.infos(refty.className) match {
+        case info: linker.Trait =>
+          meta.layout(meta.linked.ObjectClass).size
+        case info: linker.Class =>
+          meta.layout(info).size
+        case _ =>
+          unreachable
+      }
+
+      if (!refty.isNullable) {
+        (true, "dereferenceable", size)
+      } else {
+        (false, "dereferenceable_or_null", size)
       }
     }
 
@@ -341,6 +401,8 @@ object CodeGen {
                   genRegularEdge(n)
                 case n: Next.Unwind =>
                   genUnwindEdge(n)
+                case _ =>
+                  unreachable
               }
               str("]")
             }
@@ -352,10 +414,6 @@ object CodeGen {
                                           fresh: Fresh): Unit = {
       block.insts.foreach {
         case Inst.Let(_, _, unwind: Next.Unwind) =>
-          genLandingPad(unwind)
-        case Inst.Throw(_, unwind: Next.Unwind) =>
-          genLandingPad(unwind)
-        case Inst.Unreachable(unwind: Next.Unwind) =>
           genLandingPad(unwind)
         case _ =>
           ()
@@ -557,7 +615,8 @@ object CodeGen {
     def mangled(g: Global): String = g match {
       case Global.None =>
         unsupported(g)
-      case Global.Member(_, Sig.Extern(id)) =>
+      case Global.Member(_, sig) if sig.isExtern =>
+        val Sig.Extern(id) = sig.unmangled
         id
       case _ =>
         "_S" + g.mangle
@@ -580,11 +639,7 @@ object CodeGen {
         genLet(inst)
 
       case Inst.Unreachable(unwind) =>
-        newline()
-        val noBind = () => ()
-        genCall(noBind,
-                Op.Call(throwUndefinedTy, throwUndefinedVal, Seq(Val.Null)),
-                unwind)
+        assert(unwind eq Next.None)
         newline()
         str("unreachable")
 
@@ -696,6 +751,20 @@ object CodeGen {
           genType(ty)
           str("* %")
           genLocal(pointee)
+          ty match {
+            case refty: Type.RefKind =>
+              val (nonnull, deref, size) = toDereferenceable(refty)
+              if (nonnull) {
+                str(", !nonnull !{}")
+              }
+              str(", !")
+              str(deref)
+              str(" !{i64 ")
+              str(size)
+              str("}")
+            case _ =>
+              ()
+          }
 
         case Op.Store(ty, ptr, value) =>
           val pointee = fresh()
@@ -788,11 +857,11 @@ object CodeGen {
         newline()
         genBind()
         str(if (unwind ne Next.None) "invoke " else "call ")
-        genType(ty)
+        genCallFunctionType(ty)
         str(" @")
         genGlobal(pointee)
         str("(")
-        rep(args, sep = ", ")(genVal)
+        rep(args, sep = ", ")(genCallArgument)
         str(")")
 
         if (unwind ne Next.None) {
@@ -824,11 +893,11 @@ object CodeGen {
         newline()
         genBind()
         str(if (unwind ne Next.None) "invoke " else "call ")
-        genType(ty)
+        genCallFunctionType(ty)
         str(" %")
         genLocal(pointee)
         str("(")
-        rep(args, sep = ", ")(genVal)
+        rep(args, sep = ", ")(genCallArgument)
         str(")")
 
         if (unwind ne Next.None) {
@@ -842,6 +911,36 @@ object CodeGen {
           genBlockHeader()
           indent()
         }
+    }
+
+    def genCallFunctionType(ty: Type): Unit = ty match {
+      case Type.Function(argtys, retty) =>
+        val hasVarArgs = argtys.contains(Type.Vararg)
+        if (hasVarArgs) {
+          genType(ty)
+        } else {
+          genFunctionReturnType(retty)
+        }
+      case _ =>
+        unreachable
+    }
+
+    def genCallArgument(v: Val): Unit = v match {
+      case Val.Local(_, refty: Type.RefKind) =>
+        val (nonnull, deref, size) = toDereferenceable(refty)
+        genType(refty)
+        if (nonnull) {
+          str(" nonnull")
+        }
+        str(" ")
+        str(deref)
+        str("(")
+        str(size)
+        str(")")
+        str(" ")
+        genJustVal(v)
+      case _ =>
+        genVal(v)
     }
 
     def genOp(op: Op): Unit = op match {
@@ -934,20 +1033,12 @@ object CodeGen {
       "landingpad { i8*, i32 } catch i8* bitcast ({ i8*, i8*, i8* }* @_ZTIN11scalanative16ExceptionWrapperE to i8*)"
     val typeid =
       "call i32 @llvm.eh.typeid.for(i8* bitcast ({ i8*, i8*, i8* }* @_ZTIN11scalanative16ExceptionWrapperE to i8*))"
-    val throwUndefinedTy =
-      Type.Function(Seq(Type.Ptr), Type.Nothing)
-    val throwUndefined =
-      Global.Member(Global.Top("scala.scalanative.runtime.package$"),
-                    Sig.Method("throwUndefined", Seq(Type.Nothing)))
-    val throwUndefinedVal =
-      Val.Global(throwUndefined, Type.Ptr)
   }
 
   val depends: Seq[Global] = {
     val buf = mutable.UnrolledBuffer.empty[Global]
     buf ++= Lower.depends
     buf ++= Generate.depends
-    buf += Impl.throwUndefined
     buf
   }
 }

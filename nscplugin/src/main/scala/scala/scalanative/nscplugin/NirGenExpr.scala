@@ -460,17 +460,20 @@ trait NirGenExpr { self: NirGenPhase =>
       val ArrayValue(tpt, elems) = av
 
       val elemty = genType(tpt.tpe, box = false)
-      val alloc  = buf.arrayalloc(elemty, Val.Int(elems.length), unwind)
+      val values = genSimpleArgs(elems)
 
-      if (elems.nonEmpty) {
-        val values = genSimpleArgs(elems)
+      if (values.forall(_.isCanonical) && values.exists(v => !v.isZero)) {
+        buf.arrayalloc(elemty, Val.ArrayValue(elemty, values), unwind)
+      } else {
+        val alloc = buf.arrayalloc(elemty, Val.Int(elems.length), unwind)
         values.zipWithIndex.foreach {
           case (v, i) =>
-            buf.arraystore(elemty, alloc, Val.Int(i), v, unwind)
+            if (!v.isZero) {
+              buf.arraystore(elemty, alloc, Val.Int(i), v, unwind)
+            }
         }
+        alloc
       }
-
-      alloc
     }
 
     def genThis(tree: This): Val =
@@ -742,7 +745,7 @@ trait NirGenExpr { self: NirGenPhase =>
         genCQuoteOp(app)
       } else if (code == BOXED_UNIT) {
         Val.Unit
-      } else if (code >= DIV_UINT && code <= INT_TO_ULONG) {
+      } else if (code >= DIV_UINT && code <= ULONG_TO_DOUBLE) {
         genUnsignedOp(app, code)
       } else {
         abort(
@@ -1392,13 +1395,17 @@ trait NirGenExpr { self: NirGenPhase =>
     }
 
     def genUnsignedOp(app: Tree, code: Int): Val = app match {
-      case Apply(_, Seq(argp)) =>
-        assert(code >= BYTE_TO_UINT && code <= INT_TO_ULONG)
-
+      case Apply(_, Seq(argp)) if code >= BYTE_TO_UINT && code <= INT_TO_ULONG =>
         val ty  = genType(app.tpe, box = false)
         val arg = genExpr(argp)
 
         buf.conv(Conv.Zext, ty, arg, unwind)
+
+      case Apply(_, Seq(argp)) if code >= UINT_TO_FLOAT && code <= ULONG_TO_DOUBLE =>
+        val ty  = genType(app.tpe, box = false)
+        val arg = genExpr(argp)
+
+        buf.conv(Conv.Uitofp, ty, arg, unwind)
 
       case Apply(_, Seq(leftp, rightp)) =>
         val bin = code match {

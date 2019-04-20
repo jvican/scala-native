@@ -14,10 +14,39 @@ sealed abstract class ScopeInfo extends Info {
   val calls   = mutable.Set.empty[Sig]
 
   def isClass: Boolean = this.isInstanceOf[Class]
-  def isTrait: Boolean = this.isInstanceOf[Class]
+  def isTrait: Boolean = this.isInstanceOf[Trait]
   def is(info: ScopeInfo): Boolean
   def targets(sig: Sig): mutable.Set[Global]
   def implementors: mutable.Set[Class]
+
+  lazy val linearized: Seq[ScopeInfo] = {
+    val out = mutable.UnrolledBuffer.empty[ScopeInfo]
+
+    def loop(info: ScopeInfo): Unit = info match {
+      case info: Class =>
+        out += info
+        info.traits.reverse.foreach(loop)
+        info.parent.foreach(loop)
+      case info: Trait =>
+        out += info
+        info.traits.reverse.foreach(loop)
+    }
+
+    def overwrite(l: Seq[ScopeInfo]): Seq[ScopeInfo] = {
+      val indexes = mutable.Map.empty[ScopeInfo, Int]
+      l.zipWithIndex.foreach {
+        case (v, idx) =>
+          indexes(v) = idx
+      }
+      l.zipWithIndex.collect {
+        case (v, idx) if indexes(v) == idx =>
+          v
+      }
+    }
+
+    loop(this)
+    overwrite(out)
+  }
 }
 
 sealed abstract class MemberInfo extends Info {
@@ -49,12 +78,14 @@ final class Trait(val attrs: Attrs, val name: Global, val traits: Seq[Trait])
     out
   }
 
-  def is(info: ScopeInfo): Boolean = (info eq this) || {
-    info match {
-      case info: Trait =>
-        info.subtraits.contains(this)
-      case _ =>
-        false
+  def is(info: ScopeInfo): Boolean = {
+    (info eq this) || {
+      info match {
+        case info: Trait =>
+          info.subtraits.contains(this)
+        case _ =>
+          false
+      }
     }
   }
 }
@@ -72,22 +103,48 @@ final class Class(val attrs: Attrs,
 
   lazy val fields: Seq[Field] = {
     val out = mutable.UnrolledBuffer.empty[Field]
-    def add(info: Class): Unit =
+    def add(info: Class): Unit = {
+      info.parent.foreach(add)
       info.members.foreach {
         case info: Field => out += info
         case _           => ()
       }
-    parent.foreach(add)
+    }
     add(this)
     out
   }
 
   val ty: Type =
     Type.Ref(name)
-  def isStaticModule(implicit top: Result): Boolean =
-    isModule && !top.infos.contains(name.member(Sig.Ctor(Seq())))
-  def resolve(sig: Sig): Option[Global] =
+  def isConstantModule(implicit top: Result): Boolean = {
+    val hasNoFields =
+      fields.isEmpty
+    val hasEmptyOrNoCtor = {
+      val ctor = name member Sig.Ctor(Seq.empty)
+      top.infos
+        .get(ctor)
+        .fold[Boolean] {
+          true
+        } {
+          case meth: Method =>
+            meth.insts match {
+              case Array(_: Inst.Label, _: Inst.Ret) =>
+                true
+              case _ =>
+                false
+            }
+          case _ =>
+            false
+        }
+    }
+    val isWhitelisted =
+      interflow.Whitelist.constantModules.contains(name)
+
+    isModule && (isWhitelisted || attrs.isExtern || (hasEmptyOrNoCtor && hasNoFields))
+  }
+  def resolve(sig: Sig): Option[Global] = {
     responds.get(sig)
+  }
   def targets(sig: Sig): mutable.Set[Global] = {
     val out = mutable.Set.empty[Global]
 
@@ -103,14 +160,16 @@ final class Class(val attrs: Attrs,
 
     out
   }
-  def is(info: ScopeInfo): Boolean = (info eq this) || {
-    info match {
-      case info: Trait =>
-        info.implementors.contains(this)
-      case info: Class =>
-        info.subclasses.contains(this)
-      case _ =>
-        false
+  def is(info: ScopeInfo): Boolean = {
+    (info eq this) || {
+      info match {
+        case info: Trait =>
+          info.implementors.contains(this)
+        case info: Class =>
+          info.subclasses.contains(this)
+        case _ =>
+          false
+      }
     }
   }
 }
@@ -149,6 +208,7 @@ final class Result(val infos: mutable.Map[Global, Info],
                    val defns: Seq[Defn],
                    val dynsigs: Seq[Sig],
                    val dynimpls: Seq[Global]) {
+  lazy val ObjectClass       = infos(Rt.Object.name).asInstanceOf[Class]
   lazy val StringClass       = infos(Rt.StringName).asInstanceOf[Class]
   lazy val StringValueField  = infos(Rt.StringValueName).asInstanceOf[Field]
   lazy val StringOffsetField = infos(Rt.StringOffsetName).asInstanceOf[Field]

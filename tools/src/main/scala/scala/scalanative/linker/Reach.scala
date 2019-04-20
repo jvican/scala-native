@@ -6,19 +6,20 @@ import scalanative.nir._
 import scalanative.codegen.Metadata
 
 final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoader) {
-  import java.util.{HashSet, HashMap}
-  val unavailable = new HashSet[Global]
-  val loaded      = new HashMap[Global, mutable.Map[Global, Defn]]
-  val enqueued    = new HashSet[Global]
+  import java.{util => ju}
+  val unavailable = new ju.HashSet[Global]
+  val loaded      = new ju.HashMap[Global, mutable.Map[Global, Defn]]
+  val enqueued    = new ju.HashSet[Global]
   val todo        = mutable.Stack.empty[Global]
-  val done        = new HashMap[Global, Defn]
+  val done        = new ju.HashMap[Global, Defn]
   val stack       = mutable.Stack.empty[Global]
-  val links       = new HashSet[Attr.Link]
-  val infos       = new HashMap[Global, Info]
+  val links       = new ju.HashSet[Attr.Link]
+  val infos       = new ju.HashMap[Global, Info]
+  val from        = new ju.HashMap[Global, Global]
 
-  val dyncandidates = new HashMap[Sig, mutable.Set[Global]]
-  val dynsigs       = new HashSet[Sig]
-  val dynimpls      = new HashSet[Global]
+  val dyncandidates = new ju.HashMap[Sig, mutable.Set[Global]]
+  val dynsigs       = new ju.HashSet[Sig]
+  val dynimpls      = new ju.HashSet[Global]
 
   entries.foreach(reachEntry)
 
@@ -126,6 +127,7 @@ final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoade
     if (!name.isTop) {
       reachEntry(name.top)
     }
+    from.put(name, Global.None)
     reachGlobalNow(name)
     val info = infos.get(name)
     if (info != null) {
@@ -149,6 +151,7 @@ final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoade
   def reachGlobal(name: Global): Unit =
     if (!enqueued.contains(name) && name.ne(Global.None)) {
       enqueued.add(name)
+      from.put(name, if (stack.isEmpty) Global.None else stack.head)
       todo.push(name)
     }
 
@@ -223,7 +226,7 @@ final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoade
                 case Rt.JavaHashCodeSig =>
                   update(Rt.ScalaHashCodeSig)
                   update(Rt.JavaHashCodeSig)
-                case sig @ (_: Sig.Method | _: Sig.Ctor) =>
+                case sig if sig.isMethod || sig.isCtor =>
                   update(sig)
                 case _ =>
                   ()
@@ -267,7 +270,7 @@ final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoade
       // signature becomes reachable. The others are
       // stashed as dynamic candidates.
       info.responds.foreach {
-        case (sig: Sig.Method, impl) =>
+        case (sig, impl) if sig.isMethod =>
           val dynsig = sig.toProxy
           if (!dynsigs.contains(dynsig)) {
             val previousSet = dyncandidates.get(dynsig)

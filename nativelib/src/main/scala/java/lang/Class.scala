@@ -25,14 +25,14 @@ final class _Class[A](val rawty: RawPtr) {
     obj.asInstanceOf[A]
 
   def getComponentType(): _Class[_] = {
-    if (rawty == typeof[BooleanArray]) classOf[scala.Boolean]
-    else if (rawty == typeof[CharArray]) classOf[scala.Char]
-    else if (rawty == typeof[ByteArray]) classOf[scala.Byte]
-    else if (rawty == typeof[ShortArray]) classOf[scala.Short]
-    else if (rawty == typeof[IntArray]) classOf[scala.Int]
-    else if (rawty == typeof[LongArray]) classOf[scala.Long]
-    else if (rawty == typeof[FloatArray]) classOf[scala.Float]
-    else if (rawty == typeof[DoubleArray]) classOf[scala.Double]
+    if (rawty == toRawType(classOf[BooleanArray])) classOf[scala.Boolean]
+    else if (rawty == toRawType(classOf[CharArray])) classOf[scala.Char]
+    else if (rawty == toRawType(classOf[ByteArray])) classOf[scala.Byte]
+    else if (rawty == toRawType(classOf[ShortArray])) classOf[scala.Short]
+    else if (rawty == toRawType(classOf[IntArray])) classOf[scala.Int]
+    else if (rawty == toRawType(classOf[LongArray])) classOf[scala.Long]
+    else if (rawty == toRawType(classOf[FloatArray])) classOf[scala.Float]
+    else if (rawty == toRawType(classOf[DoubleArray])) classOf[scala.Double]
     else classOf[java.lang.Object]
   }
 
@@ -53,15 +53,15 @@ final class _Class[A](val rawty: RawPtr) {
     ???
 
   def isArray(): scala.Boolean =
-    (rawty == typeof[BooleanArray] ||
-      rawty == typeof[CharArray] ||
-      rawty == typeof[ByteArray] ||
-      rawty == typeof[ShortArray] ||
-      rawty == typeof[IntArray] ||
-      rawty == typeof[LongArray] ||
-      rawty == typeof[FloatArray] ||
-      rawty == typeof[DoubleArray] ||
-      rawty == typeof[ObjectArray])
+    (rawty == toRawType(classOf[BooleanArray]) ||
+      rawty == toRawType(classOf[CharArray]) ||
+      rawty == toRawType(classOf[ByteArray]) ||
+      rawty == toRawType(classOf[ShortArray]) ||
+      rawty == toRawType(classOf[IntArray]) ||
+      rawty == toRawType(classOf[LongArray]) ||
+      rawty == toRawType(classOf[FloatArray]) ||
+      rawty == toRawType(classOf[DoubleArray]) ||
+      rawty == toRawType(classOf[ObjectArray]))
 
   def isAssignableFrom(that: Class[_]): scala.Boolean =
     is(that.asInstanceOf[_Class[_]].ty, ty)
@@ -73,55 +73,39 @@ final class _Class[A](val rawty: RawPtr) {
     // This replicates the logic of the compiler-generated instance check
     // that you would normally get if you do (obj: L).isInstanceOf[R],
     // where rtti for L and R are `left` and `right`.
-    left.kind match {
-      case CLASS_KIND =>
-        right.kind match {
-          case CLASS_KIND =>
-            val rightCls  = right.asInstanceOf[Ptr[ClassType]]
-            val rightFrom = rightCls.idRangeFrom
-            val rightTo   = rightCls.idRangeTo
-            val leftId    = left.id
-            leftId >= rightFrom && leftId <= rightTo
-          case TRAIT_KIND =>
-            __check_class_has_trait(left.id, right.id)
-          case STRUCT_KIND =>
-            false
-        }
-      case TRAIT_KIND =>
-        right.kind match {
-          case CLASS_KIND =>
-            false
-          case TRAIT_KIND =>
-            __check_trait_has_trait(left.id, right.id)
-          case STRUCT_KIND =>
-            false
-        }
-      case STRUCT_KIND =>
-        right.kind match {
-          case CLASS_KIND =>
-            false
-          case TRAIT_KIND =>
-            false
-          case STRUCT_KIND =>
-            left.id == right.id
-        }
+    if (left.isClass) {
+      if (right.isClass) {
+        val rightCls  = right.asInstanceOf[Ptr[ClassType]]
+        val rightFrom = rightCls.id
+        val rightTo   = rightCls.idRangeUntil
+        val leftId    = left.id
+        leftId >= rightFrom && leftId <= rightTo
+      } else {
+        __check_class_has_trait(left.id, -right.id - 1)
+      }
+    } else {
+      if (right.isClass) {
+        false
+      } else {
+        __check_trait_has_trait(-left.id - 1, -right.id - 1)
+      }
     }
 
   def isInterface(): scala.Boolean =
-    ty.kind == TRAIT_KIND
+    !ty.isClass
 
   def isPrimitive(): scala.Boolean =
-    (rawty == typeof[PrimitiveBoolean] ||
-      rawty == typeof[PrimitiveChar] ||
-      rawty == typeof[PrimitiveByte] ||
-      rawty == typeof[PrimitiveShort] ||
-      rawty == typeof[PrimitiveInt] ||
-      rawty == typeof[PrimitiveLong] ||
-      rawty == typeof[PrimitiveFloat] ||
-      rawty == typeof[PrimitiveDouble] ||
-      rawty == typeof[PrimitiveUnit])
+    (rawty == toRawType(classOf[PrimitiveBoolean]) ||
+      rawty == toRawType(classOf[PrimitiveChar]) ||
+      rawty == toRawType(classOf[PrimitiveByte]) ||
+      rawty == toRawType(classOf[PrimitiveShort]) ||
+      rawty == toRawType(classOf[PrimitiveInt]) ||
+      rawty == toRawType(classOf[PrimitiveLong]) ||
+      rawty == toRawType(classOf[PrimitiveFloat]) ||
+      rawty == toRawType(classOf[PrimitiveDouble]) ||
+      rawty == toRawType(classOf[PrimitiveUnit]))
 
-  override def equals(other: Any): scala.Boolean =
+  @inline override def equals(other: Any): scala.Boolean =
     other match {
       case other: _Class[_] =>
         rawty == other.rawty
@@ -129,16 +113,12 @@ final class _Class[A](val rawty: RawPtr) {
         false
     }
 
-  override def hashCode: Int =
+  @inline override def hashCode: Int =
     Intrinsics.castRawPtrToLong(rawty).##
 
   override def toString = {
-    val name = getName
-    val prefix = ty.kind match {
-      case CLASS_KIND  => "class "
-      case TRAIT_KIND  => "interface "
-      case STRUCT_KIND => "struct "
-    }
+    val name   = getName
+    val prefix = if (ty.isClass) "class " else "interface "
     prefix + name
   }
 

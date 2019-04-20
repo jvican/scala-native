@@ -121,6 +121,8 @@ final class BinaryDeserializer(buffer: ByteBuffer, scope: Scope) {
     // Inlined because overhead of creating sequence + using `Attrs.fromSeq` is high
     import scala.scalanative.nir.Attr._
     var inline     = Attrs.None.inline
+    var specialize = Attrs.None.specialize
+    var opt        = Attrs.None.opt
     var isExtern   = false
     var isDyn      = false
     var isStub     = false
@@ -133,6 +135,8 @@ final class BinaryDeserializer(buffer: ByteBuffer, scope: Scope) {
     while (i <= end) {
       getAttr match {
         case attr: Inline    => inline = attr
+        case attr: Specialize => specialize = attr
+        case attr: Opt        => opt = attr
         case Extern          => isExtern = true
         case Dyn             => isDyn = true
         case Stub            => isStub = true
@@ -142,7 +146,7 @@ final class BinaryDeserializer(buffer: ByteBuffer, scope: Scope) {
       i += 1
     }
 
-    new Attrs(inline, isExtern, isDyn, isStub, isAbstract, links)
+    new Attrs(inline, specialize, opt, isExtern, isDyn, isStub, isAbstract, links)
   }
 
   private def getAttr(): Attr = getInt match {
@@ -150,6 +154,14 @@ final class BinaryDeserializer(buffer: ByteBuffer, scope: Scope) {
     case T.InlineHintAttr   => Attr.InlineHint
     case T.NoInlineAttr     => Attr.NoInline
     case T.AlwaysInlineAttr => Attr.AlwaysInline
+
+    case T.MaySpecialize => Attr.MaySpecialize
+    case T.NoSpecialize  => Attr.NoSpecialize
+
+    case T.UnOptAttr   => Attr.UnOpt
+    case T.NoOptAttr   => Attr.NoOpt
+    case T.DidOptAttr  => Attr.DidOpt
+    case T.BailOptAttr => Attr.BailOpt(getString)
 
     case T.DynAttr      => Attr.Dyn
     case T.StubAttr     => Attr.Stub
@@ -265,15 +277,8 @@ final class BinaryDeserializer(buffer: ByteBuffer, scope: Scope) {
     }
   }
 
-  private def getSig(): Sig = getInt match {
-    case T.FieldSig     => Sig.Field(getString)
-    case T.CtorSig      => Sig.Ctor(getTypes)
-    case T.MethodSig    => Sig.Method(getString, getTypes)
-    case T.ProxySig     => Sig.Proxy(getString, getTypes)
-    case T.ExternSig    => Sig.Extern(getString)
-    case T.GeneratedSig => Sig.Generated(getString)
-    case T.DuplicateSig => Sig.Duplicate(getSig, getTypes)
-  }
+  private def getSig(): Sig =
+    new Sig(getString)
 
   private def getLocal(): Local =
     Local(getLong)

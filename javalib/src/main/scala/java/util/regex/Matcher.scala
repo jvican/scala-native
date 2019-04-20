@@ -72,7 +72,15 @@ final class Matcher private[regex] (var _pattern: Pattern,
 
   def lookingAt(): Boolean = genMatch(0, ANCHOR_START)
 
-  def find(start: Int): Boolean = genMatch(0, UNANCHORED)
+  def find(start: Int): Boolean = {
+
+    if ((start < 0) || (start > inputLength)) {
+      throw new IndexOutOfBoundsException("Illegal start index")
+    }
+
+    reset()
+    genMatch(start, UNANCHORED)
+  }
 
   def find(): Boolean = {
     var startIndex = 0
@@ -265,6 +273,7 @@ final class Matcher private[regex] (var _pattern: Pattern,
     this
   }
 
+  @stub
   def region(start: Int, end: Int): Matcher = ???
 
   private[regex] def appendReplacement2(sb: StringBuffer,

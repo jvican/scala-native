@@ -195,7 +195,7 @@ final class Check(implicit linked: linker.Result) {
     case Op.Method(obj, sig) =>
       expect(Rt.Object, obj)
       sig match {
-        case _: Sig.Method | _: Sig.Ctor =>
+        case sig if sig.isMethod || sig.isCtor =>
           ok
         case _ =>
           error(s"method must take a method signature, not ${sig.show}")
@@ -217,7 +217,7 @@ final class Check(implicit linked: linker.Result) {
     case Op.Dynmethod(obj, sig) =>
       expect(Rt.Object, obj)
       sig match {
-        case _: Sig.Proxy =>
+        case sig if sig.isProxy =>
           ok
         case _ =>
           error(s"dynmethod must take a proxy signature, not ${sig.show}")
@@ -399,20 +399,23 @@ final class Check(implicit linked: linker.Result) {
                    obj: Val,
                    name: Global,
                    value: Option[Val]): Unit = {
+
     obj.ty match {
-      case ClassRef(cls) =>
-        cls.fields.collectFirst {
-          case fld: Field if fld.name == name =>
-            in("field declared type") {
-              expect(ty, fld.ty)
-            }
-            value.foreach { v =>
-              in("stored value") {
-                expect(fld.ty, v)
+      case ScopeRef(scope) =>
+        scope.implementors.foreach { cls =>
+          cls.fields.collectFirst {
+            case fld: Field if fld.name == name =>
+              in("field declared type") {
+                expect(ty, fld.ty)
               }
-            }
+              value.foreach { v =>
+                in("stored value") {
+                  expect(fld.ty, v)
+                }
+              }
+          }
         }
-      case _ =>
+      case ty =>
         error(s"can't access fields of a non-class type ${ty.show}")
     }
   }
@@ -497,7 +500,7 @@ final class Check(implicit linked: linker.Result) {
       }
     case Conv.Fptoui =>
       (value.ty, ty) match {
-        case (Type.Float | Type.Double, ity: Type.I) if !ity.signed =>
+        case (Type.Float | Type.Double, ity: Type.I) =>
           ok
         case _ =>
           error(s"can't fptoui from ${value.ty.show} to ${ty.show}")
@@ -511,7 +514,7 @@ final class Check(implicit linked: linker.Result) {
       }
     case Conv.Uitofp =>
       (value.ty, ty) match {
-        case (ity: Type.I, Type.Float | Type.Double) if !ity.signed =>
+        case (ity: Type.I, Type.Float | Type.Double) =>
           ok
         case _ =>
           error(s"can't uitofp from ${value.ty.show} to ${ty.show}")

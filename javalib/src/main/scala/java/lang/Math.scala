@@ -132,10 +132,10 @@ object Math {
     cmath.log1p(a)
 
   @inline def max(a: scala.Double, b: scala.Double): scala.Double =
-    `llvm.maxnum.f64`(a, b)
+    if (a.isNaN || b.isNaN) Double.NaN else `llvm.maxnum.f64`(a, b)
 
   @inline def max(a: scala.Float, b: scala.Float): scala.Float =
-    `llvm.maxnum.f32`(a, b)
+    if (a.isNaN || b.isNaN) Float.NaN else `llvm.maxnum.f32`(a, b)
 
   @inline def max(a: scala.Int, b: scala.Int): scala.Int =
     if (a > b) a else b
@@ -144,10 +144,10 @@ object Math {
     if (a > b) a else b
 
   @inline def min(a: scala.Double, b: scala.Double): scala.Double =
-    `llvm.minnum.f64`(a, b)
+    if (a.isNaN || b.isNaN) Double.NaN else `llvm.minnum.f64`(a, b)
 
   @inline def min(a: scala.Float, b: scala.Float): scala.Float =
-    `llvm.minnum.f32`(a, b)
+    if (a.isNaN || b.isNaN) Float.NaN else `llvm.minnum.f32`(a, b)
 
   @inline def min(a: scala.Int, b: scala.Int): scala.Int =
     if (a < b) a else b
@@ -171,7 +171,7 @@ object Math {
     subtractExact(0, a)
 
   @inline def negateExact(a: scala.Long): scala.Long =
-    subtractExact(0, a)
+    subtractExact(0L, a)
 
   def nextAfter(a: scala.Float, b: scala.Double): scala.Float = {
     val aabs = abs(a.toDouble)
@@ -179,7 +179,7 @@ object Math {
 
     if (Float.isNaN(a) || Double.isNaN(b)) {
       Float.NaN
-    } else if (aabs == 0f && babs == 0d) {
+    } else if (aabs == 0.0f && babs == 0.0d) {
       b.toFloat
     } else if (aabs == Float.MIN_VALUE && babs < aabs) {
       copySign(0, a)
@@ -200,10 +200,10 @@ object Math {
 
     if (Double.isNaN(a) || Double.isNaN(b)) {
       Double.NaN
-    } else if (aabs == 0f && babs == 0d) {
+    } else if (aabs == 0.0d && babs == 0.0d) {
       b
     } else if (aabs == Double.MIN_VALUE && babs < aabs) {
-      copySign(0, a)
+      copySign(0.0d, a)
     } else if (Double.isInfinite(a) && babs < aabs) {
       copySign(Double.MAX_VALUE, a)
     } else if (aabs == Double.MAX_VALUE && babs > aabs) {
@@ -234,11 +234,35 @@ object Math {
   @inline def rint(a: scala.Double): scala.Double =
     `llvm.rint.f64`(a)
 
-  @inline def round(a: scala.Float): scala.Int =
-    `llvm.round.f32`(a).toInt
+  @inline def round(a: scala.Float): scala.Int = {
+    if (a.isNaN) {
+      0
+    } else if (a >= scala.Int.MaxValue.toFloat - 0.5f) {
+      scala.Int.MaxValue
+    } else if (a <= scala.Int.MinValue.toFloat) {
+      scala.Int.MinValue
+    } else {
+      // Java rounds both +/- half to towards +Infinity.
+      // In its default rounding mode, llvm.round.f32 rounds half away
+      // from zero (+/- Infinity).
+      math.floor(a + 0.5f).toInt
+    }
+  }
 
-  @inline def round(a: scala.Double): scala.Long =
-    `llvm.round.f64`(a).toLong
+  @inline def round(a: scala.Double): scala.Long = {
+    if (a.isNaN) {
+      0L
+    } else if (a >= scala.Long.MaxValue.toDouble - 0.5d) {
+      scala.Long.MaxValue
+    } else if (a <= scala.Long.MinValue.toDouble) {
+      scala.Long.MinValue
+    } else {
+      // Java rounds both +/- half towards +Infinity.
+      // In its default rounding mode, llvm.round.f64 rounds half away
+      // from zero (+/- Infinity).
+      math.floor(a + 0.5d).toLong
+    }
+  }
 
   @inline def scalb(a: scala.Float, scaleFactor: scala.Int): scala.Float =
     cmath.scalbnf(a, scaleFactor)

@@ -236,20 +236,25 @@ object Character {
   @inline def charCount(codePoint: Int): Int =
     if (codePoint >= MIN_SUPPLEMENTARY_CODE_POINT) 2 else 1
 
+  def codePointAt(seq: Array[scala.Char], _index: scala.Int): scala.Int = {
+    codePointAt(seq, _index, seq.length)
+  }
+
   def codePointAt(seq: Array[scala.Char],
-                  _index: scala.Int,
+                  index: scala.Int,
                   limit: scala.Int): scala.Int = {
-    var index = _index
+
     if (index < 0 || index >= limit || limit < 0 || limit > seq.length) {
-      throw new ArrayIndexOutOfBoundsException()
+      throw new StringIndexOutOfBoundsException()
     }
 
-    val high = seq(index)
-    index += 1
-    if (index >= limit) {
+    val high      = seq(index)
+    val nextIndex = index + 1
+
+    if (nextIndex >= limit) {
       high
     } else {
-      val low = seq(index)
+      val low = seq(nextIndex)
       if (isSurrogatePair(high, low))
         toCodePoint(high, low)
       else
@@ -257,25 +262,40 @@ object Character {
     }
   }
 
-  def codePointBefore(seq: Array[scala.Char], _index: scala.Int): scala.Int = {
-    var index = _index
-    val len   = seq.length
+  def codePointAt(seq: CharSequence, _index: scala.Int): scala.Int = {
+    codePointAt(seq.toString.toArray[scala.Char], _index)
+  }
+
+  def codePointBefore(seq: Array[scala.Char], index: scala.Int): scala.Int = {
+    codePointBefore(seq, index, seq.length)
+  }
+
+  def codePointBefore(seq: Array[scala.Char],
+                      index: scala.Int,
+                      limit: scala.Int): scala.Int = {
+    val len = limit
     if (index < 1 || index > len) {
-      throw new ArrayIndexOutOfBoundsException(index)
+      throw new StringIndexOutOfBoundsException(index)
     }
 
-    index -= 1
-    val low = seq.charAt(index)
-    index -= 1
-    if (index < 0) {
+    val indexMinus1 = index - 1
+    val indexMinus2 = index - 2
+
+    val low = seq.charAt(indexMinus1)
+
+    if (indexMinus2 < 0) {
       low
     } else {
-      val high = seq(index)
+      val high = seq(indexMinus2)
       if (isSurrogatePair(high, low))
         toCodePoint(high, low)
       else
         low
     }
+  }
+
+  def codePointBefore(seq: CharSequence, index: scala.Int): scala.Int = {
+    codePointBefore(seq.toString.toArray[scala.Char], index)
   }
 
   def codePointCount(seq: Array[scala.Char],
@@ -284,12 +304,12 @@ object Character {
     val len      = seq.length
     val endIndex = offset + count
     if (offset < 0 || count < 0 || endIndex > len) {
-      throw new IndexOutOfBoundsException()
+      throw new StringIndexOutOfBoundsException()
     }
 
     var result = 0
     var i      = offset
-    while (i <= endIndex) {
+    while (i < endIndex) {
       var c = seq(i)
       if (isHighSurrogate(c)) {
         i += 1
@@ -314,8 +334,9 @@ object Character {
                          index: scala.Int,
                          codePointOffset: scala.Int): scala.Int = {
     val end = start + count
-    if (start < 0 || count < 0 || end > seq.length || index < start || index > end) {
-      throw new IndexOutOfBoundsException()
+    if (start < 0 || count < 0 || end > seq.length || index < start
+        || index > end) {
+      throw new StringIndexOutOfBoundsException()
     }
 
     if (codePointOffset == 0) {
@@ -326,7 +347,7 @@ object Character {
       while (codePoints > 0) {
         codePoints -= 1
         if (i >= end) {
-          throw new IndexOutOfBoundsException()
+          throw new StringIndexOutOfBoundsException()
         }
         if (isHighSurrogate(seq(i))) {
           val next = i + 1
@@ -344,7 +365,7 @@ object Character {
         codePoints -= 1
         i -= 1
         if (i < start) {
-          throw new IndexOutOfBoundsException()
+          throw new StringIndexOutOfBoundsException()
         }
         if (isLowSurrogate(seq(i))) {
           val prev = i - 1
@@ -397,21 +418,76 @@ object Character {
     charTypes(Math.abs(idx))
   }
 
-  def digit(c: scala.Char, radix: Int): Int = {
+  // Two digit() constructors, digitWithValidRadix(), and
+  // nonASCIIZeroDigitCodePoints ported, with gratitude from ScalaJS:
+  // https://github.com/scala-js/scala-js/blob/master/javalanglib \
+  //       /src/main/scala/java/lang/Character.scala
+
+  @inline
+  def digit(ch: scala.Char, radix: Int): Int =
+    digit(ch.toInt, radix)
+
+  @inline // because radix is probably constant at call site
+  def digit(codePoint: Int, radix: Int): Int = {
     if (radix > MAX_RADIX || radix < MIN_RADIX)
       -1
-    else if (c >= '0' && c <= '9' && c - '0' < radix)
-      c - '0'
-    else if (c >= 'A' && c <= 'Z' && c - 'A' < radix - 10)
-      c - 'A' + 10
-    else if (c >= 'a' && c <= 'z' && c - 'a' < radix - 10)
-      c - 'a' + 10
-    else if (c >= '\uFF21' && c <= '\uFF3A' &&
-             c - '\uFF21' < radix - 10)
-      c - '\uFF21' + 10
-    else if (c >= '\uFF41' && c <= '\uFF5A' &&
-             c - '\uFF41' < radix - 10)
-      c - '\uFF21' + 10
+    else
+      digitWithValidRadix(codePoint, radix)
+  }
+
+  /** All the non-ASCII code points that map to the digit 0.
+   *
+   *  Each of them is directly followed by 9 other code points mapping to the
+   *  digits 1 to 9, in order. Conversely, there are no other non-ASCII code
+   *  point mapping to digits from 0 to 9.
+   */
+  private[this] lazy val nonASCIIZeroDigitCodePoints: Array[Int] = {
+    Array[Int](0x660, 0x6f0, 0x7c0, 0x966, 0x9e6, 0xa66, 0xae6, 0xb66, 0xbe6,
+      0xc66, 0xce6, 0xd66, 0xe50, 0xed0, 0xf20, 0x1040, 0x1090, 0x17e0, 0x1810,
+      0x1946, 0x19d0, 0x1a80, 0x1a90, 0x1b50, 0x1bb0, 0x1c40, 0x1c50, 0xa620,
+      0xa8d0, 0xa900, 0xa9d0, 0xaa50, 0xabf0, 0xff10, 0x104a0, 0x11066, 0x110f0,
+      0x11136, 0x111d0, 0x116c0, 0x1d7ce, 0x1d7d8, 0x1d7e2, 0x1d7ec, 0x1d7f6)
+  }
+
+  private[lang] def digitWithValidRadix(codePoint: Int, radix: Int): Int = {
+    val value = if (codePoint < 256) {
+      // Fast-path for the ASCII repertoire
+      if (codePoint >= '0' && codePoint <= '9')
+        codePoint - '0'
+      else if (codePoint >= 'A' && codePoint <= 'Z')
+        codePoint - ('A' - 10)
+      else if (codePoint >= 'a' && codePoint <= 'z')
+        codePoint - ('a' - 10)
+      else
+        -1
+    } else {
+      if (codePoint >= 0xff21 && codePoint <= 0xff3a) {
+        // Fullwidth uppercase Latin letter
+        codePoint - (0xff21 - 10)
+      } else if (codePoint >= 0xff41 && codePoint <= 0xff5a) {
+        // Fullwidth lowercase Latin letter
+        codePoint - (0xff41 - 10)
+      } else {
+        // Maybe it is a digit in a non-ASCII script
+
+        // Find the position of the 0 digit corresponding to this code point
+        val p                  = Arrays.binarySearch(nonASCIIZeroDigitCodePoints, codePoint)
+        val zeroCodePointIndex = if (p < 0) -2 - p else p
+
+        /* If the index is below 0, it cannot be a digit. Otherwise, the value
+         * is the difference between the given codePoint and the code point of
+         * its corresponding 0. We must ensure that it is not bigger than 9.
+         */
+        if (zeroCodePointIndex < 0) {
+          -1
+        } else {
+          val v = codePoint - nonASCIIZeroDigitCodePoints(zeroCodePointIndex)
+          if (v > 9) -1 else v
+        }
+      }
+    }
+
+    if (value < radix) value
     else -1
   }
 
