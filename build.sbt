@@ -226,7 +226,6 @@ lazy val toolSettings =
           case "0.13" => sbt13ScalaVersion
           case _      => sbt10ScalaVersion
         }
-        //sbt10ScalaVersion
       },
       scalacOptions ++= Seq(
         "-deprecation",
@@ -321,20 +320,29 @@ lazy val tools =
     )
     .dependsOn(nir, util, testingCompilerInterface % Test)
 
-lazy val benchmarks = project
+// To benchmark, it's recommended to run `^^1.2.6` to switch to Scala 2.12 first
+lazy val toolsBenchmarks = project
+  .in(file("tools-benchmarks"))
   .enablePlugins(JmhPlugin)
-  .dependsOn(tools % "test->test")
+  .enablePlugins(BuildInfoPlugin)
+  .dependsOn(tools % "compile->test")
+  .settings(toolSettings)
   .settings(
-    //scalaVersion := sbt10ScalaVersion,
-    sourceDirectory in Jmh := (sourceDirectory in Test).value,
-    classDirectory in Jmh := (classDirectory in Test).value,
-    dependencyClasspath in Jmh := (dependencyClasspath in Test).value,
-    compile in Jmh := (compile in Jmh).dependsOn(compile in Test).value,
+    sourceDirectory in Jmh := (sourceDirectory in Compile).value,
+    classDirectory in Jmh := (classDirectory in Compile).value,
+    dependencyClasspath in Jmh := (dependencyClasspath in Compile).value,
+    compile in Jmh := (compile in Jmh).dependsOn(compile in Compile).value,
     run in Jmh := (run in Jmh).dependsOn(Keys.compile in Jmh).evaluated,
-    libraryDependencies += "ch.epfl.scala" %% "bloop-config" % "1.2.5"
-    //javaOptions in Test ++= (javaOptions in Test in tools).value,
-    //javaOptions in Jmh ++= (javaOptions in Test in tools).value ++ List("-XX:+UnlockCommercialFeatures", "-XX:+FlightRecorder")
-    //javaOptions in run in Jmh ++= List("-XX:+UnlockDiagnosticVMOptions", "-XX:+DebugNonSafepoints")
+    // Only generate build info for test configuration
+    buildInfoObject in Compile := "TestSuiteBuildInfo",
+    buildInfoPackage in Compile := "scala.scalanative.internal.build",
+    buildInfoKeys in Compile := List(
+      BuildInfoKey.map(Keys.fullClasspath.in(NativeTest).in(tests)) {
+        case (key, value) => ("fullTestSuiteClasspath", value.toList.map(_.data))
+      }
+    )
+    // Set up java options to profile with async-profiler and flight recorder 
+    //javaOptions in Jmh ++= List("-XX:+UnlockCommercialFeatures", "-XX:+FlightRecorder", "-XX:+UnlockDiagnosticVMOptions", "-XX:+DebugNonSafepoints")
   )
 
 lazy val nscplugin =
@@ -547,6 +555,7 @@ lazy val scalalib =
 lazy val tests =
   project
     .in(file("unit-tests"))
+    .enablePlugins(ScalaNativePlugin)
     .settings(projectSettings)
     .settings(noPublishSettings)
     .settings(
@@ -565,7 +574,6 @@ lazy val tests =
         "SCALA_NATIVE_USER_DIR"          -> System.getProperty("user.dir")
       )
     )
-    .enablePlugins(ScalaNativePlugin)
 
 lazy val sandbox =
   project
