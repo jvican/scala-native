@@ -282,8 +282,7 @@ object Lower {
       def genMethodLookup(): Unit = {
         val targets = obj.ty match {
           case ScopeRef(scope) =>
-            import scala.collection.JavaConverters._
-            scope.targets(sig).asScala.toSeq
+            scope.targets(sig).toSeq
           case _ =>
             Seq()
         }

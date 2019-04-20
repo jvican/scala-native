@@ -29,8 +29,7 @@ class VirtualTable(meta: Metadata, cls: linker.Class) {
     slots.foreach { sig =>
       addImpl(sig)
     }
-    import scala.collection.JavaConverters._
-    cls.calls.asScala.foreach { sig =>
+    cls.calls.foreach { sig =>
       if (cls.targets(sig).size > 1) {
         if (!impls.contains(sig)) {
           addSlot(sig)

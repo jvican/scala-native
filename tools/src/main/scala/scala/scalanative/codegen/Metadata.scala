@@ -44,10 +44,8 @@ class Metadata(val linked: linker.Result, proxies: Seq[Defn]) {
       out += node
       val start = id
       id += 1
-
-      import scala.collection.JavaConverters._
       val directSubclasses =
-        node.subclasses.asScala.filter(_.parent == Some(node)).toArray
+        node.subclasses.filter(_.parent == Some(node)).toArray
       directSubclasses.sortBy(_.name.show).foreach { subcls =>
         loop(subcls)
       }

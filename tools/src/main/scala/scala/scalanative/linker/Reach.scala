@@ -5,11 +5,7 @@ import scala.collection.mutable
 import scalanative.nir._
 import scalanative.codegen.Metadata
 
-final class Reach(
-    config: build.Config,
-    entries: Seq[Global],
-    loader: ClassLoader
-) {
+final class Reach(config: build.Config, entries: Seq[Global], loader: ClassLoader) {
   import java.util.{HashSet, HashMap}
   val unavailable = new HashSet[Global]
   val loaded      = new HashMap[Global, mutable.Map[Global, Defn]]
@@ -33,15 +29,13 @@ final class Reach(
     val defns = mutable.UnrolledBuffer.empty[Defn]
     defns ++= done.asScala.valuesIterator
 
-    new Result(
-      infos.asScala,
-      entries,
-      unavailable.asScala.toList,
-      links.asScala.toList,
-      defns,
-      dynsigs.asScala.toList,
-      dynimpls.asScala.toList
-    )
+    new Result(infos.asScala,
+               entries,
+               unavailable.asScala.toList,
+               links.asScala.toList,
+               defns,
+               dynsigs.asScala.toList,
+               dynimpls.asScala.toList)
   }
 
   def cleanup(): Unit = {
@@ -49,13 +43,13 @@ final class Reach(
     // responds map of every class. Optimizer and
     // codegen may never increase reachability past
     // what's known now, so it's safe to do this.
-    infos.asScala.valuesIterator.foreach {
+    infos.asScala.values.foreach {
       case cls: Class =>
-        val entries = cls.responds.asScala.toArray
+        val entries = cls.responds.toArray
         entries.foreach {
           case (sig, name) =>
             if (!done.containsKey(name) && !unavailable.contains(name)) {
-              cls.responds.remove(sig)
+              cls.responds -= sig
             }
         }
       case _ =>
@@ -140,7 +134,7 @@ final class Reach(
           if (!cls.attrs.isAbstract) {
             reachAllocation(cls)
             if (cls.isModule) {
-              val init  = cls.name.member(Sig.Ctor(Seq()))
+              val init = cls.name.member(Sig.Ctor(Seq()))
               val defns = loaded.get(cls.name)
               if (defns != null && defns.contains(init)) {
                 reachGlobal(init)
@@ -185,7 +179,7 @@ final class Reach(
         }
       case info: Trait =>
         def loopTraits(traitInfo: Trait): Unit = {
-          traitInfo.subtraits.add(info)
+          traitInfo.subtraits += info
           traitInfo.traits.foreach(loopTraits)
         }
         info.traits.foreach(loopTraits)
@@ -194,13 +188,13 @@ final class Reach(
         // transitive parents and as an implementation
         // of all transitive traits.
         def loopParent(parentInfo: Class): Unit = {
-          parentInfo.implementors.add(info)
-          parentInfo.subclasses.add(info)
+          parentInfo.implementors += info
+          parentInfo.subclasses += info
           parentInfo.parent.foreach(loopParent)
           parentInfo.traits.foreach(loopTraits)
         }
         def loopTraits(traitInfo: Trait): Unit = {
-          traitInfo.implementors.add(info)
+          traitInfo.implementors += info
           traitInfo.traits.foreach(loopTraits)
         }
         info.parent.foreach(loopParent)
@@ -212,7 +206,7 @@ final class Reach(
         // may end up being not reachable, we remove those
         // in the cleanup right before we return the result.
         info.parent.foreach { parentInfo =>
-          info.responds.putAll(parentInfo.responds)
+          info.responds ++= parentInfo.responds
         }
         val defns = loaded.get(info.name)
         if (defns != null) {
@@ -220,7 +214,7 @@ final class Reach(
             case (_, defn: Defn.Define) =>
               val Global.Member(_, sig) = defn.name
               def update(sig: Sig): Unit = {
-                info.responds.put(sig, resolve(info, sig).get)
+                info.responds(sig) = resolve(info, sig).get
               }
               sig match {
                 case Rt.JavaEqualsSig =>
@@ -251,54 +245,48 @@ final class Reach(
       // on this class. This includes virtual calls
       // on the traits that this class implements and
       // calls on all transitive parents.
-      val calls     = new HashSet[Sig]
-      calls.addAll(info.calls)
-
+      val calls = mutable.Set.empty[Sig]
+      calls ++= info.calls
       def loopParent(parentInfo: Class): Unit = {
-        calls.addAll(parentInfo.calls)
+        calls ++= parentInfo.calls
         parentInfo.parent.foreach(loopParent)
         parentInfo.traits.foreach(loopTraits)
       }
       def loopTraits(traitInfo: Trait): Unit = {
-        calls.addAll(traitInfo.calls)
+        calls ++= traitInfo.calls
         traitInfo.traits.foreach(loopTraits)
       }
       info.parent.foreach(loopParent)
       info.traits.foreach(loopTraits)
-      calls.iterator.asScala.foreach { sig =>
-        val g = info.responds.get(sig)
-        if (g != null) reachGlobal(g)
+      calls.foreach { sig =>
+        info.responds.get(sig).foreach(reachGlobal)
       }
 
       // Handle all dynamic methods on this class.
       // Any method that implements a known dynamic
       // signature becomes reachable. The others are
       // stashed as dynamic candidates.
-      val it = info.responds.entrySet.iterator
-      while (it.hasNext) {
-        val entry = it.next
-        entry.getKey match {
-          case sig: Sig.Method =>
-            val impl   = entry.getValue
-            val dynsig = sig.toProxy
-            if (!dynsigs.contains(dynsig)) {
-              val previousSet = dyncandidates.get(dynsig)
-              val buffer = {
-                if (previousSet != null) previousSet
-                else {
-                  val newSet = mutable.Set.empty[Global]
-                  dyncandidates.put(dynsig, newSet)
-                  newSet
-                }
+      info.responds.foreach {
+        case (sig: Sig.Method, impl) =>
+          val dynsig = sig.toProxy
+          if (!dynsigs.contains(dynsig)) {
+            val previousSet = dyncandidates.get(dynsig)
+            val buffer = {
+              if (previousSet != null) previousSet
+              else {
+                val newSet = mutable.Set.empty[Global]
+                dyncandidates.put(dynsig, newSet)
+                newSet
               }
-
-              buffer += impl
-            } else {
-              dynimpls.add(impl)
-              reachGlobal(impl)
             }
-          case _ => ()
-        }
+
+            buffer += impl
+          } else {
+            dynimpls.add(impl)
+            reachGlobal(impl)
+          }
+        case _ =>
+          ()
       }
     }
 
@@ -306,7 +294,7 @@ final class Reach(
     reachGlobalNow(name)
     infos.get(name) match {
       case info: ScopeInfo => Some(info)
-      case _               => None
+      case _ => None
     }
   }
 
@@ -364,15 +352,12 @@ final class Reach(
   def reachVar(defn: Defn.Var): Unit = {
     val Defn.Var(attrs, name, ty, rhs) = defn
     newInfo(
-      new Field(
-        attrs,
-        scopeInfoOrUnavailable(name.top),
-        name,
-        isConst = false,
-        ty,
-        rhs
-      )
-    )
+      new Field(attrs,
+                scopeInfoOrUnavailable(name.top),
+                name,
+                isConst = false,
+                ty,
+                rhs))
     reachAttrs(attrs)
     reachType(ty)
     reachVal(rhs)
@@ -381,15 +366,12 @@ final class Reach(
   def reachConst(defn: Defn.Const): Unit = {
     val Defn.Const(attrs, name, ty, rhs) = defn
     newInfo(
-      new Field(
-        attrs,
-        scopeInfoOrUnavailable(name.top),
-        name,
-        isConst = true,
-        ty,
-        rhs
-      )
-    )
+      new Field(attrs,
+                scopeInfoOrUnavailable(name.top),
+                name,
+                isConst = true,
+                ty,
+                rhs))
     reachAttrs(attrs)
     reachType(ty)
     reachVal(rhs)
@@ -398,8 +380,7 @@ final class Reach(
   def reachDeclare(defn: Defn.Declare): Unit = {
     val Defn.Declare(attrs, name, ty) = defn
     newInfo(
-      new Method(attrs, scopeInfoOrUnavailable(name.top), name, ty, Array())
-    )
+      new Method(attrs, scopeInfoOrUnavailable(name.top), name, ty, Array()))
     reachAttrs(attrs)
     reachType(ty)
   }
@@ -407,14 +388,11 @@ final class Reach(
   def reachDefine(defn: Defn.Define): Unit = {
     val Defn.Define(attrs, name, ty, insts) = defn
     newInfo(
-      new Method(
-        attrs,
-        scopeInfoOrUnavailable(name.top),
-        name,
-        ty,
-        insts.toArray
-      )
-    )
+      new Method(attrs,
+                 scopeInfoOrUnavailable(name.top),
+                 name,
+                 ty,
+                 insts.toArray))
     reachAttrs(attrs)
     reachType(ty)
     reachInsts(insts)
@@ -429,28 +407,22 @@ final class Reach(
   def reachClass(defn: Defn.Class): Unit = {
     val Defn.Class(attrs, name, parent, traits) = defn
     newInfo(
-      new Class(
-        attrs,
-        name,
-        parent.map(classInfoOrObject),
-        traits.flatMap(traitInfo),
-        isModule = false
-      )
-    )
+      new Class(attrs,
+                name,
+                parent.map(classInfoOrObject),
+                traits.flatMap(traitInfo),
+                isModule = false))
     reachAttrs(attrs)
   }
 
   def reachModule(defn: Defn.Module): Unit = {
     val Defn.Module(attrs, name, parent, traits) = defn
     newInfo(
-      new Class(
-        attrs,
-        name,
-        parent.map(classInfoOrObject),
-        traits.flatMap(traitInfo),
-        isModule = true
-      )
-    )
+      new Class(attrs,
+                name,
+                parent.map(classInfoOrObject),
+                traits.flatMap(traitInfo),
+                isModule = true))
     reachAttrs(attrs)
   }
 
@@ -576,7 +548,7 @@ final class Reach(
       reachDynamicMethodTargets(dynsig)
     case Op.Module(n) =>
       classInfo(n).foreach(reachAllocation)
-      val init  = n.member(Sig.Ctor(Seq()))
+      val init = n.member(Sig.Ctor(Seq()))
       val defns = loaded.get(n)
       if (defns != null) {
         if (defns.contains(init)) {
@@ -634,11 +606,8 @@ final class Reach(
     case Type.Ref(name, _, _) =>
       scopeInfo(name).foreach { scope =>
         if (!scope.calls.contains(sig)) {
-          scope.calls.add(sig)
-          val it = scope.targets(sig).iterator
-          while (it.hasNext) {
-            reachGlobal(it.next)
-          }
+          scope.calls += sig
+          scope.targets(sig).foreach(reachGlobal)
         }
       }
     case _ =>
@@ -703,11 +672,9 @@ final class Reach(
 }
 
 object Reach {
-  def apply(
-      config: build.Config,
-      entries: Seq[Global],
-      loader: ClassLoader
-  ): Result = {
+  def apply(config: build.Config,
+            entries: Seq[Global],
+            loader: ClassLoader): Result = {
     val reachability = new Reach(config, entries, loader)
     reachability.process()
     reachability.result()
